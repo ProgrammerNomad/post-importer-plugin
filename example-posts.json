@@ -1,0 +1,158 @@
+[
+    {
+        "id":  4368345,
+        "title":  "Organic Farming And Its Scope",
+        "short_description":  "Agriculture  With the introduction of industries, new technologies and methods have been introduced in the farming sector which is adopted  ",
+        "categories":  [
+                           {
+                               "id":  47430,
+                               "name":  "Agriculture",
+                               "slug":  "agriculture",
+                               "parent_category":  null,
+                               "category_brand_color":  "#60ef23",
+                               "absolute_url":  "https://groundreport.in/agriculture"
+                           }
+                       ],
+        "tags":  [
+                     {
+                         "name":  "climate change",
+                         "slug":  "climate-change",
+                         "absolute_url":  "https://groundreport.in/tags/climate-change"
+                     },
+                     {
+                         "name":  "Farming",
+                         "slug":  "farming",
+                         "absolute_url":  "https://groundreport.in/tags/farming"
+                     }
+                 ],
+        "primary_category":  {
+                                 "id":  47430,
+                                 "name":  "Agriculture",
+                                 "slug":  "agriculture",
+                                 "parent_category":  null,
+                                 "category_brand_color":  "#60ef23",
+                                 "absolute_url":  "https://groundreport.in/agriculture"
+                             },
+        "contributors":  [
+                             {
+                                 "name":  "Babra Wani",
+                                 "slug":  "babrahwani",
+                                 "description":  "",
+                                 "facebook":  "",
+                                 "linkedin":  "",
+                                 "instagram":  "",
+                                 "twitter":  "",
+                                 "avatar":  null,
+                                 "absolute_url":  "https://groundreport.in/author/babrahwani",
+                                 "id":  26820,
+                                 "email":  "wanib069@gmail.com"
+                             }
+                         ],
+        "hide_banner_image":  null,
+        "banner_url":  "https://img-cdn.publive.online/fit-in/640x480/filters:format(webp)/ground-report/media/post_banners/wp-content/uploads/2022/06/Source-unsplash-2022-06-07T135237.759.jpg",
+        "banner_description":  "",
+        "summary":  "With the introduction of industries, new technologies and methods have been introduced in the farming sector which is adopted by farmers for making farming a dependable source of income and secure employment. ",
+        "legacy_url":  "/organic-farming-and-its-scope/",
+        "type":  "Article",
+        "word_count":  655,
+        "meta_data":  {
+                          "_last_editor_used_jetpack":  "[\u0027block-editor\u0027]",
+                          "_yoast_wpseo_keywordsynonyms":  "[\u0027[\"farming \"]\u0027]",
+                          "_yoast_wpseo_estimated-reading-time-minutes":  "[\u00273\u0027]",
+                          "_yoast_wpseo_wordproof_timestamp":  "[\u0027\u0027]",
+                          "__post_views_count":  "[\u00271041\u0027]",
+                          "ppma_authors_name":  "[\u0027Babra Wani\u0027]",
+                          "_edit_lock":  "[\u00271659278119:31\u0027]",
+                          "sortd_62e5371cad92d9645dfc60b3_post_sync":  "[\u00271\u0027]",
+                          "sortd_62e5371cad92d9645dfc60b3_post_article_id":  "[\u002762e61391ba1ba664e3346f11\u0027]",
+                          "_wpas_done_all":  "[\u00271\u0027]",
+                          "_edit_last":  "[\u002731\u0027]",
+                          "onesignal_send_notification":  "[\u0027\u0027]",
+                          "onesignal_notification_custom_heading":  "[None]",
+                          "_yoast_indexnow_last_ping":  "[\u00271659245466\u0027]",
+                          "_eaa":  "[\u0027\u0027]",
+                          "_yoast_wpseo_metadesc":  "[\u0027With the introduction of industries, new technologies and methods have been introduced in the farming sector which is adopted\u0027]",
+                          "_yoast_wpseo_focuskw":  "[\u0027Farming\u0027]",
+                          "_yoast_wpseo_linkdex":  "[\u002780\u0027]",
+                          "bulk_sync_62e5371cad92d9645dfc60b3":  "[\u00272\u0027]",
+                          "_yoast_wpseo_focuskeywords":  "[\u0027[]\u0027]",
+                          "sortd_62e5371cad92d9645dfc60b3_sync_error_message":  "[\u0027\u0027]",
+                          "_thumbnail_id":  "[\u0027125115\u0027]",
+                          "gnpub_modified_count":  "[\u00271\u0027]",
+                          "onesignal_meta_box_present":  "[\u0027\u0027]",
+                          "onesignal_modify_title_and_content":  "[\u0027\u0027]",
+                          "_heateor_sss_meta":  "[\u0027a:2:{s:7:\"sharing\";i:0;s:16:\"vertical_sharing\";i:0;}\u0027]",
+                          "_yoast_wpseo_primary_category":  "[\u0027642863413\u0027]",
+                          "onesignal_notification_custom_content":  "[None]",
+                          "_post_views":  "[\u0027412\u0027]",
+                          "_yoast_wpseo_content_score":  "[\u002730\u0027]",
+                          "meta_keywords":  "Farming,climate change",
+                          "meta_canonical_url":  "https://groundreport.in/organic-farming-and-its-scope/"
+                      },
+        "blog_update":  [
+
+                        ],
+        "access_type":  "Public",
+        "formatted_first_published_at_datetime":  "2022-07-31T11:01:04+05:30",
+        "formatted_last_published_at_datetime":  "2022-07-31T11:01:04+05:30",
+        "language_code":  "en",
+        "absolute_url":  "https://groundreport.in/organic-farming-and-its-scope/",
+        "custom_entity":  {
+
+                          },
+        "media_file_banner":  {
+                                  "id":  6073088,
+                                  "filename":  "Source-unsplash-2022-06-07T135237.759.jpg",
+                                  "path":  "https://img-cdn.publive.online/fit-in/640x480/filters:format(webp)/ground-report/media/post_banners/wp-content/uploads/2022/06/Source-unsplash-2022-06-07T135237.759.jpg",
+                                  "alt_text":  "Organic Farming And Its Scope",
+                                  "meta_data":  null,
+                                  "meta_data_json":  {
+
+                                                     },
+                                  "source":  null,
+                                  "caption":  null
+                              },
+        "member":  {
+                       "name":  "Babra Wani",
+                       "slug":  "babrahwani",
+                       "description":  "",
+                       "facebook":  "",
+                       "linkedin":  "",
+                       "instagram":  "",
+                       "twitter":  "",
+                       "avatar":  null,
+                       "absolute_url":  "https://groundreport.in/author/babrahwani",
+                       "id":  26820,
+                       "email":  "wanib069@gmail.com"
+                   },
+        "updated_by":  {
+                           "name":  "Wahid Bhat",
+                           "slug":  "bwahid32",
+                           "description":  "Wahid Bhat is an environmental journalist with a focus on extreme weather events and lightning. He reports on severe weather incidents such as floods, heatwaves, cloudbursts, and lightning strikes, highlighting their growing frequency and impact on communities. ",
+                           "facebook":  "https://www.facebook.com/Bwahid32",
+                           "linkedin":  "https://www.linkedin.com//in/wahidbhat32/",
+                           "instagram":  "https://www.instagram.com/Talesofwahid",
+                           "twitter":  "https://www.twitter.com/Wahidbhat32",
+                           "avatar":  "ground-report/media/member_avatars/2024-07-27t053045784z-img_1358.jpg",
+                           "absolute_url":  "https://groundreport.in/author/bwahid32",
+                           "id":  26772,
+                           "email":  "Wahidb@groundreport.in"
+                       },
+        "content":  "\u003cp\u003eWith the introduction of industries, new technologies and methods have been introduced in the farming sector which is adopted by farmers for making farming a dependable source of income and secure employment. But in recent times, indiscriminate use of chemicals in the form of fertilizers and pesticides in agriculture has ruined the soil and killed the organic matter that it has.\u003c/p\u003e\n\u003cp\u003eKashmir, with its suitable temperature, easy availability of water and favourable environmental conditions is a perfect place for practising organic farming. The Kashmiri agricultural system has the potential to evolve into a sustainable source of income for the farmers there if organic farming is developed and implemented correctly.\u003c/p\u003e\n\u003cp\u003eAccording to the literature of agricultural background, the concept of organic farming evolved in 1930 and 1940. The United States Department of Agriculture (USDA) defined organic farming as \u0026ldquo; A system which avoids or largely excludes the use of synthetic inputs(fertilizers, pesticides, etc) and to the maximum extent feasible rely upon crop rotation, crop residues, animal manures, the biological system of nutrient mobilization and plant protection.\u0026rdquo;\u003c/p\u003e\n\u003cp\u003eThe aims of organic farming include:\u003c/p\u003e\n\u003cul\u003e\n\u003cli\u003eTo produce food of high quality and quantity.\u003c/li\u003e\n\u003c/ul\u003e\n\u003cul\u003e\n\u003cli\u003eTo work with natural system.\u003c/li\u003e\n\u003c/ul\u003e\n\u003cul\u003e\n\u003cli\u003eTo encourage and enhance biological cycles.\u003c/li\u003e\n\u003c/ul\u003e\n\u003cul\u003e\n\u003cli\u003eTo maintain and increase the long term fertility of soil.\u003c/li\u003e\n\u003c/ul\u003e\n\u003cul\u003e\n\u003cli\u003eTo avoid all forms pollution.\u003c/li\u003e\n\u003c/ul\u003e\n\u003cul\u003e\n\u003cli\u003eTo avoid or skip the use of chemicals in whatever form.\u003c/li\u003e\n\u003c/ul\u003e\n\u003cp\u003eAccording to official records, in 2010, agriculture contributes about 14.6% of the Gross Domestic Product(GDP) and supports 58% of India\u0026rsquo;s population for livelihood. With the increasing demand of food, the emphasis now is laid on organic farming which not only provides food of good quality but this practice is environment friendly.\u003c/p\u003e\n\u003cp\u003eThe government of India has also launched various schemes like Paramparagat Krishi Vikas Yojna(PkVY) which initiated programs like organic farming capacity building, market linkage initiatives, etc which have promoted and popularized organic farming. According to the data available in FIBL and IFOAM yearbook 2020, India stands at 8th position in world\u0026rsquo;s Organic Agricultural land and 1st in terms of the total number of producers.\u003c/p\u003e\n\u003cp\u003e65% of the revenue generated in Kashmir is from the Agriculture sector so a lot can be done in this field. As mentioned earlier due to favourable environmental conditions the practice of organic farming is easier. Some reports suggest that organic farming is not a new concept in Jammu and Kashmir, as it is being practised on approximately 50 thousand hectares of land and has an organic certified area of 22,316 hectares.\u003c/p\u003e\n\u003cp\u003eAccording to some other \u003ca href=\"https://thekashmirimages.com/2021/08/08/organic-farming-in-jammu-and-kashmir-progress-challenges-and-prospects/#:~:text=So%20far%2C%201180%20hectare%20area,farming%20(Chandra%2C%202014)\"\u003ereports\u003c/a\u003e, in 2014, 1180 hectares area has been identified for organic farming in Jammu and Kashmir, this includes 500 hectares under Krishi Vikas Yojna, 380 hectares under horticulture, and 300 hectares for vegetable cultivation. Several reports reveal that around 3409 farmers from the state have received training in organic farming. During the past two years, the Agriculture department has done a remarkable job in promoting organic farming. For the first time in 2020 Kashmir Agriculture Department introduced an organic market in Srinagar. A model organic village was also established by the department in Pulwama.\u003c/p\u003e\n\u003cp\u003eThus, a lot can be done in this field and has been already done, especially in Kashmir. So, if more farmers join hands and adopt this farming system they can relish a great benefit and profit from it.\u003c/p\u003e\n\u003cul\u003e\u003c/ul\u003e\n\u003cp dir=\"ltr\"\u003e\u003cspan\u003e\u003cspan class=\"yt-core-attributed-string--link-inherit-color\" dir=\"auto\"\u003e\u003cem\u003e\u003cb\u003e\u003cspan style=\"color: rgb(224, 62, 45);\"\u003e\u003ca href=\"https://razorpay.me/@groundreport\" rel=\"dofollow noopener\" target=\"_blank\" style=\"color: rgb(224, 62, 45);\"\u003eSupport us\u003c/a\u003e\u0026nbsp;\u003c/span\u003e\u003cspan style=\"color: rgb(45, 194, 107);\"\u003eto keep independent environmental journalism alive in India.\u003c/span\u003e\u003c/b\u003e\u003c/em\u003e\u003c/span\u003e\u003c/span\u003e\u003c/p\u003e\n\u003ch2\u003eKeep Reading\u003c/h2\u003e\n\u003cp\u003e\u003ca href=\"https://groundreport.in/what-is-green-hydrogen-could-it-change-energy-in-south-asia/\"\u003eWhat is Green Hydrogen?\u0026nbsp;Could it change energy in South Asia?\u003c/a\u003e\u003c/p\u003e\n\u003cp\u003e\u003ca href=\"https://groundreport.in/blue-hydrogen-is-worst-for-climate-study/\"\u003eBlue hydrogen is worst for climate: study\u003c/a\u003e\u003c/p\u003e\n\u003cp\u003e\u003ca href=\"https://groundreport.in/how-increasing-space-traffic-threatens-ozone-layer/\"\u003eHow Increasing space traffic threatens ozone layer?\u003c/a\u003e\u003c/p\u003e\n\u003cp\u003e\u003ca href=\"https://groundreport.in/hydro-fuel-market-indias-current-scenario-and-the-future-ahead/\"\u003eHydro Fuel Market: India\u0026rsquo;s current scenario and the future ahead\u003c/a\u003e\u003c/p\u003e\n\u003cp\u003e\u003ca href=\"https://groundreport.in/natural-gas-is-a-misleading-term-it-is-not-natural-and-clean-at-all/\"\u003eNatural Gas is a Misleading term, It is not Natural and clean at all\u003c/a\u003e\u003c/p\u003e\n\u003cp\u003e\u003cspan class=\"yt-core-attributed-string--link-inherit-color\" dir=\"auto\"\u003e\u003cem\u003e\u003cb\u003eFollow Ground Report on\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003c/b\u003e\u003c/em\u003e\u003c/span\u003e\u003cem\u003e\u003cb\u003e\u003ca href=\"https://x.com/GReportIndia\" rel=\"noopener\" target=\"_blank\"\u003eX\u003c/a\u003e,\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003ca href=\"https://www.instagram.com/groundreport.in/\" rel=\"noopener\" target=\"_blank\"\u003eInstagram\u003c/a\u003e\u003cspan\u003e\u0026nbsp;\u003c/span\u003eand\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003ca href=\"https://www.facebook.com/groundreport.in/\" rel=\"noopener\" target=\"_blank\"\u003eFacebook\u003c/a\u003e\u003cspan\u003e\u0026nbsp;\u003c/span\u003efor environmental and underreported stories from the margins. Give us feedback on our email id\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003ca href=\"mailto:greport2018@gmail.com\" rel=\"noopener\" target=\"_blank\"\u003egreport2018@gmail.com\u003c/a\u003e.\u0026nbsp;\u003c/b\u003e\u003c/em\u003e\u003c/p\u003e\n\u003cp\u003e\u003cspan class=\"yt-core-attributed-string--link-inherit-color\" dir=\"auto\"\u003e\u003cem\u003e\u003cb\u003eDon\u0027t forget to Subscribe to our\u0026nbsp;\u003ca href=\"https://substack.com/@groundreport?utm_source=profile-page\" rel=\"noopener\" target=\"_blank\"\u003eweekly newsletter,\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003c/a\u003eJoin our community on\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003ca href=\"https://chat.whatsapp.com/FObBVITgI0tGpEXZGTmqW7\" rel=\"noopener\" target=\"_blank\"\u003eWhatsApp,\u003cspan\u003e\u0026nbsp;\u003c/span\u003e\u003c/a\u003eand\u0026nbsp;Follow our\u0026nbsp;\u003ca href=\"https://www.youtube.com/channel/UCOPrhDpz7YNM5zLYN9CIq0w\" rel=\"noopener\" target=\"_blank\"\u003eYouTube Channel\u003c/a\u003e\u003cspan\u003e\u0026nbsp;\u003c/span\u003efor video stories.\u003c/b\u003e\u003c/em\u003e\u003c/span\u003e\u003c/p\u003e\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e\n\u003cp\u003e\u0026nbsp;\u003c/p\u003e",
+        "content_json":  [
+
+                         ],
+        "content_html":  "",
+        "slug":  "organic-farming-and-its-scope",
+        "Cache-Tags":  [
+                           "PP.4368345",
+                           "MD.11460",
+                           "MD.11508",
+                           "MD.11508",
+                           "CAT.47430",
+                           "TAG.2530358",
+                           "TAG.2510163",
+                           "CAT.47430"
+                       ]
+    }
+]
