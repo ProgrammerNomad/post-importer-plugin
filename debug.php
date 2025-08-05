@@ -104,6 +104,16 @@ add_action('admin_notices', function() {
         }
         echo '</p></div>';
     }
+    
+    // Handle fixing missing featured images
+    if (current_user_can('manage_options') && isset($_GET['fix_featured_images'])) {
+        $results = fix_missing_featured_images();
+        
+        echo '<div class="notice notice-success"><p>';
+        echo '<strong>Featured Image Fix:</strong> ';
+        echo "Fixed {$results['fixed']} posts, failed to fix {$results['failed']} posts.";
+        echo '</p></div>';
+    }
 });
 
 // Function to verify featured image assignments
@@ -134,7 +144,8 @@ function verify_featured_images() {
             // Log details for debugging
             $banner_url = get_post_meta($post->ID, '_banner_image_url', true);
             $featured_imported = get_post_meta($post->ID, '_featured_image_imported', true);
-            error_log("Post Importer Debug: Post {$post->ID} missing thumbnail. Banner URL: {$banner_url}, Import status: {$featured_imported}");
+            $thumbnail_id = get_post_meta($post->ID, '_thumbnail_id', true);
+            error_log("Post Importer Debug: Post {$post->ID} missing thumbnail. Banner URL: {$banner_url}, Import status: {$featured_imported}, Thumbnail ID meta: {$thumbnail_id}");
         }
     }
     
@@ -155,6 +166,57 @@ function verify_featured_images() {
         'missing_posts' => $missing_posts,
         'total_images' => $total_images
     );
+}
+
+// Function to fix missing featured images for already imported posts
+function fix_missing_featured_images() {
+    global $wpdb;
+    
+    $fixed_count = 0;
+    $failed_count = 0;
+    
+    // Get posts that have banner_image_id but no thumbnail
+    $posts_to_fix = $wpdb->get_results("
+        SELECT p.ID, pm1.meta_value as banner_image_id, pm2.meta_value as banner_url
+        FROM {$wpdb->posts} p
+        INNER JOIN {$wpdb->postmeta} pm1 ON p.ID = pm1.post_id AND pm1.meta_key = '_banner_image_id'
+        LEFT JOIN {$wpdb->postmeta} pm2 ON p.ID = pm2.post_id AND pm2.meta_key = '_banner_image_url'
+        LEFT JOIN {$wpdb->postmeta} pm3 ON p.ID = pm3.post_id AND pm3.meta_key = '_thumbnail_id'
+        WHERE p.post_type = 'post'
+        AND pm3.meta_value IS NULL
+        AND pm1.meta_value IS NOT NULL
+        AND pm1.meta_value != ''
+    ");
+    
+    foreach ($posts_to_fix as $post) {
+        $image_id = intval($post->banner_image_id);
+        
+        // Verify the attachment exists
+        $attachment = get_post($image_id);
+        if ($attachment && $attachment->post_type === 'attachment') {
+            // Set as featured image
+            $result = set_post_thumbnail($post->ID, $image_id);
+            if ($result) {
+                $fixed_count++;
+                error_log("Post Importer Fix: Set featured image {$image_id} for post {$post->ID}");
+            } else {
+                // Try direct meta update
+                update_post_meta($post->ID, '_thumbnail_id', $image_id);
+                if (has_post_thumbnail($post->ID)) {
+                    $fixed_count++;
+                    error_log("Post Importer Fix: Set featured image {$image_id} for post {$post->ID} via direct meta");
+                } else {
+                    $failed_count++;
+                    error_log("Post Importer Fix: Failed to set featured image {$image_id} for post {$post->ID}");
+                }
+            }
+        } else {
+            $failed_count++;
+            error_log("Post Importer Fix: Image {$image_id} does not exist for post {$post->ID}");
+        }
+    }
+    
+    return array('fixed' => $fixed_count, 'failed' => $failed_count);
 }
 
 // Add debug menu for testing
@@ -179,6 +241,7 @@ add_action('admin_menu', function() {
                 
                 echo '<h3>Verification:</h3>';
                 echo '<p><a href="' . admin_url('tools.php?page=post-importer-debug&verify_featured_images=1') . '" class="button button-secondary">Verify Featured Images</a></p>';
+                echo '<p><a href="' . admin_url('tools.php?page=post-importer-debug&fix_featured_images=1') . '" class="button button-secondary" onclick="return confirm(\'Are you sure? This will attempt to fix posts that have downloaded images but missing featured image assignments.\')">Fix Missing Featured Images</a></p>';
                 
                 echo '<h3>Debug Information:</h3>';
                 echo '<ul>';

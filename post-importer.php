@@ -804,15 +804,23 @@ class PostImporter {
     }
     
     private function handle_featured_image($post_id, $image_url, $post_title, $force_replace = false) {
-        // Validate URL
+        // Validate inputs
         if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
             error_log("Post Importer: Invalid image URL for post {$post_id}: {$image_url}");
+            return false;
+        }
+        
+        // Ensure post exists and is valid
+        $post = get_post($post_id);
+        if (!$post || $post->post_status === 'trash') {
+            error_log("Post Importer: Post {$post_id} does not exist or is trashed");
             return false;
         }
         
         // Ensure post thumbnail support is enabled
         if (!current_theme_supports('post-thumbnails')) {
             add_theme_support('post-thumbnails');
+            error_log("Post Importer: Added post-thumbnails theme support");
         }
         
         global $wpdb;
@@ -826,7 +834,7 @@ class PostImporter {
             ));
             
             if ($existing_attachment) {
-                // Use existing image
+                // Set existing image as featured image
                 $result = set_post_thumbnail($post_id, $existing_attachment);
                 if ($result) {
                     error_log("Post Importer: Reused existing image {$existing_attachment} for post {$post_id}");
@@ -840,58 +848,97 @@ class PostImporter {
             $filename = basename(parse_url($image_url, PHP_URL_PATH));
             if (!empty($filename)) {
                 $existing_by_filename = $wpdb->get_var($wpdb->prepare(
-                    "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND post_title = %s OR post_name = %s",
+                    "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND (post_title = %s OR post_name = %s)",
                     pathinfo($filename, PATHINFO_FILENAME),
                     sanitize_title(pathinfo($filename, PATHINFO_FILENAME))
                 ));
                 
                 if ($existing_by_filename) {
-                    // Use existing image with same filename
                     $result = set_post_thumbnail($post_id, $existing_by_filename);
                     if ($result) {
                         error_log("Post Importer: Reused existing image by filename {$existing_by_filename} for post {$post_id}");
                         return $existing_by_filename;
-                    } else {
-                        error_log("Post Importer: Failed to set existing image by filename {$existing_by_filename} as thumbnail for post {$post_id}");
                     }
                 }
             }
         }
         
-        // Download and set new featured image
+        // Download new image
+        error_log("Post Importer: Downloading new image from {$image_url} for post {$post_id}");
         $image_id = $this->download_image($image_url, $post_title, $post_id);
         
-        if ($image_id && !is_wp_error($image_id)) {
-            // Set as featured image
-            $thumbnail_result = set_post_thumbnail($post_id, $image_id);
-            
-            if (!$thumbnail_result) {
-                error_log("Post Importer: Failed to set featured image for post ID {$post_id}, image ID {$image_id}");
-                return false;
-            }
-            
-            // Verify that the thumbnail was actually set
-            $current_thumbnail = get_post_thumbnail_id($post_id);
-            if ($current_thumbnail != $image_id) {
-                error_log("Post Importer: Thumbnail verification failed for post ID {$post_id}. Expected: {$image_id}, Got: {$current_thumbnail}");
-            } else {
-                error_log("Post Importer: Successfully set featured image for post ID {$post_id}, image ID {$image_id}");
-            }
-            
-            // Update the attachment post to have better title and alt text
-            wp_update_post(array(
-                'ID' => $image_id,
-                'post_title' => $post_title,
-                'post_excerpt' => $post_title, // Caption
-            ));
-            
-            // Set alt text
-            update_post_meta($image_id, '_wp_attachment_image_alt', $post_title);
-            
-            return $image_id;
+        if (!$image_id || is_wp_error($image_id) || !is_numeric($image_id)) {
+            error_log("Post Importer: Failed to download image from {$image_url}");
+            return false;
         }
         
-        return false;
+        // Verify the attachment was created successfully
+        $attachment = get_post($image_id);
+        if (!$attachment || $attachment->post_type !== 'attachment') {
+            error_log("Post Importer: Downloaded image ID {$image_id} is not a valid attachment");
+            return false;
+        }
+        
+        // Set as featured image with multiple attempts
+        error_log("Post Importer: Setting image {$image_id} as featured image for post {$post_id}");
+        
+        // Method 1: Use WordPress function
+        $thumbnail_result = set_post_thumbnail($post_id, $image_id);
+        
+        if (!$thumbnail_result) {
+            error_log("Post Importer: set_post_thumbnail() failed, trying direct meta update");
+            
+            // Method 2: Direct meta update as fallback
+            $meta_result = update_post_meta($post_id, '_thumbnail_id', $image_id);
+            
+            if (!$meta_result) {
+                error_log("Post Importer: Direct meta update also failed for post {$post_id}");
+                return false;
+            }
+        }
+        
+        // Verify the thumbnail was actually set
+        $current_thumbnail = get_post_thumbnail_id($post_id);
+        error_log("Post Importer: Before verification - Expected: {$image_id}, Current: {$current_thumbnail}");
+
+        if ($current_thumbnail != $image_id) {
+            error_log("Post Importer: Thumbnail verification failed. Expected: {$image_id}, Got: {$current_thumbnail}");
+            
+            // Check what's in the post meta directly
+            $meta_thumbnail = get_post_meta($post_id, '_thumbnail_id', true);
+            error_log("Post Importer: Direct meta check shows: {$meta_thumbnail}");
+            
+            // Final attempt with wp_update_post to trigger hooks
+            wp_update_post(array(
+                'ID' => $post_id,
+                'meta_input' => array(
+                    '_thumbnail_id' => $image_id
+                )
+            ));
+            
+            // Check one more time
+            $current_thumbnail = get_post_thumbnail_id($post_id);
+            error_log("Post Importer: After final attempt - Current: {$current_thumbnail}");
+            
+            if ($current_thumbnail != $image_id) {
+                error_log("Post Importer: All methods failed to set featured image for post {$post_id}");
+                return false;
+            }
+        }
+        
+        error_log("Post Importer: Successfully set featured image {$image_id} for post {$post_id}");
+        
+        // Update the attachment to have better metadata
+        wp_update_post(array(
+            'ID' => $image_id,
+            'post_title' => $post_title,
+            'post_excerpt' => $post_title, // Caption
+        ));
+        
+        // Set alt text
+        update_post_meta($image_id, '_wp_attachment_image_alt', $post_title);
+        
+        return $image_id;
     }
     
     private function download_image($image_url, $description = '', $post_id = 0) {
@@ -901,23 +948,56 @@ class PostImporter {
         
         // Validate URL
         if (!filter_var($image_url, FILTER_VALIDATE_URL)) {
+            error_log("Post Importer: Invalid URL format: {$image_url}");
             return false;
         }
         
         // Check if URL is accessible
         $response = wp_remote_head($image_url);
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) != 200) {
+        if (is_wp_error($response)) {
+            error_log("Post Importer: URL check failed - WP Error: " . $response->get_error_message());
             return false;
         }
         
-        // Get the image and attach it to the post
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code != 200) {
+            error_log("Post Importer: URL not accessible, response code: {$response_code}");
+            return false;
+        }
+        
+        // Verify the post exists if post_id is provided
+        if ($post_id > 0) {
+            $post = get_post($post_id);
+            if (!$post) {
+                error_log("Post Importer: Post ID {$post_id} does not exist, downloading without attachment");
+                $post_id = 0; // Download without attachment
+            }
+        }
+        
+        error_log("Post Importer: Attempting to download image from {$image_url} for post {$post_id}");
+        
+        // Download the image and attach it to the post
         $image_id = media_sideload_image($image_url, $post_id, $description, 'id');
         
         if (is_wp_error($image_id)) {
-            // Log the error for debugging
-            error_log('Post Importer: Failed to download image ' . $image_url . ': ' . $image_id->get_error_message());
+            error_log('Post Importer: media_sideload_image failed for URL ' . $image_url . ': ' . $image_id->get_error_message());
             return false;
         }
+        
+        // Verify the image was actually created
+        if (!$image_id || !is_numeric($image_id)) {
+            error_log("Post Importer: media_sideload_image returned invalid ID: " . print_r($image_id, true));
+            return false;
+        }
+        
+        // Verify the attachment exists
+        $attachment = get_post($image_id);
+        if (!$attachment || $attachment->post_type !== 'attachment') {
+            error_log("Post Importer: Downloaded image ID {$image_id} is not a valid attachment");
+            return false;
+        }
+        
+        error_log("Post Importer: Successfully downloaded image from {$image_url}, attachment ID: {$image_id}");
         
         // Mark this image as imported by our plugin for future reference
         update_post_meta($image_id, '_imported_by_post_importer', true);
@@ -985,6 +1065,25 @@ class PostImporter {
     
     private function handle_meta_data($post_id, $meta_data) {
         foreach ($meta_data as $key => $value) {
+            // Skip thumbnail-related meta to avoid overwriting our featured image
+            if ($key === '_thumbnail_id' || $key === 'thumbnail_id') {
+                continue;
+            }
+            
+            // Skip other WordPress core meta that could interfere
+            $skip_meta = array(
+                '_thumbnail_id',
+                'thumbnail_id',
+                '_wp_attached_file',
+                '_wp_attachment_metadata',
+                '_edit_lock',
+                '_edit_last'
+            );
+            
+            if (in_array($key, $skip_meta)) {
+                continue;
+            }
+            
             if (is_array($value) && count($value) == 1) {
                 $value = $value[0];
             }
