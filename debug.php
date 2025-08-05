@@ -77,7 +77,85 @@ add_action('admin_notices', function() {
         
         echo '</p></div>';
     }
+    
+    // Handle cleanup orphaned images
+    if (current_user_can('manage_options') && isset($_GET['cleanup_images'])) {
+        $post_importer = new PostImporter();
+        $deleted_count = $post_importer->cleanup_orphaned_images();
+        
+        echo '<div class="notice notice-success"><p>';
+        echo '<strong>Post Importer Cleanup:</strong> ';
+        echo "Cleaned up {$deleted_count} orphaned images that were no longer being used.";
+        echo '</p></div>';
+    }
+    
+    // Handle featured image verification
+    if (current_user_can('manage_options') && isset($_GET['verify_featured_images'])) {
+        $results = verify_featured_images();
+        
+        echo '<div class="notice notice-info"><p>';
+        echo '<strong>Featured Image Verification:</strong><br>';
+        echo "Total imported posts: {$results['total_posts']}<br>";
+        echo "Posts with featured images: {$results['with_thumbnails']}<br>";
+        echo "Posts missing featured images: {$results['missing_thumbnails']}<br>";
+        echo "Images in media library: {$results['total_images']}<br>";
+        if (!empty($results['missing_posts'])) {
+            echo "Post IDs missing thumbnails: " . implode(', ', $results['missing_posts']) . "<br>";
+        }
+        echo '</p></div>';
+    }
 });
+
+// Function to verify featured image assignments
+function verify_featured_images() {
+    global $wpdb;
+    
+    // Get all posts imported by our plugin
+    $imported_posts = $wpdb->get_results("
+        SELECT p.ID, p.post_title, pm.meta_value as banner_url
+        FROM {$wpdb->posts} p
+        INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id 
+        WHERE pm.meta_key = '_original_post_id'
+        AND p.post_type = 'post'
+    ");
+    
+    $total_posts = count($imported_posts);
+    $with_thumbnails = 0;
+    $missing_thumbnails = 0;
+    $missing_posts = array();
+    
+    foreach ($imported_posts as $post) {
+        if (has_post_thumbnail($post->ID)) {
+            $with_thumbnails++;
+        } else {
+            $missing_thumbnails++;
+            $missing_posts[] = $post->ID;
+            
+            // Log details for debugging
+            $banner_url = get_post_meta($post->ID, '_banner_image_url', true);
+            $featured_imported = get_post_meta($post->ID, '_featured_image_imported', true);
+            error_log("Post Importer Debug: Post {$post->ID} missing thumbnail. Banner URL: {$banner_url}, Import status: {$featured_imported}");
+        }
+    }
+    
+    // Count total images imported by plugin
+    $total_images = $wpdb->get_var("
+        SELECT COUNT(*)
+        FROM {$wpdb->posts} p
+        INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+        WHERE p.post_type = 'attachment'
+        AND pm.meta_key = '_imported_by_post_importer'
+        AND pm.meta_value = '1'
+    ");
+    
+    return array(
+        'total_posts' => $total_posts,
+        'with_thumbnails' => $with_thumbnails,
+        'missing_thumbnails' => $missing_thumbnails,
+        'missing_posts' => $missing_posts,
+        'total_images' => $total_images
+    );
+}
 
 // Add debug menu for testing
 add_action('admin_menu', function() {
@@ -91,8 +169,17 @@ add_action('admin_menu', function() {
             function() {
                 echo '<div class="wrap">';
                 echo '<h1>Post Importer Debug Tools</h1>';
-                echo '<p>Use these tools to test the featured image download functionality.</p>';
+                echo '<p>Use these tools to test the featured image download functionality and manage imported images.</p>';
+                
+                echo '<h3>Image Testing:</h3>';
                 echo '<p><a href="' . admin_url('tools.php?page=post-importer-debug&test_image_download=1') . '" class="button button-primary">Test Image Download</a></p>';
+                
+                echo '<h3>Image Management:</h3>';
+                echo '<p><a href="' . admin_url('tools.php?page=post-importer-debug&cleanup_images=1') . '" class="button button-secondary" onclick="return confirm(\'Are you sure? This will delete all imported images that are not currently being used as featured images.\')">Cleanup Orphaned Images</a></p>';
+                
+                echo '<h3>Verification:</h3>';
+                echo '<p><a href="' . admin_url('tools.php?page=post-importer-debug&verify_featured_images=1') . '" class="button button-secondary">Verify Featured Images</a></p>';
+                
                 echo '<h3>Debug Information:</h3>';
                 echo '<ul>';
                 echo '<li><strong>WordPress Version:</strong> ' . get_bloginfo('version') . '</li>';

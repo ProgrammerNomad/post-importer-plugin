@@ -618,8 +618,13 @@ class PostImporter {
                 $old_thumbnail_id = get_post_thumbnail_id($post_id);
                 delete_post_thumbnail($post_id);
                 
-                // Optionally delete the old image file from media library
-                // wp_delete_attachment($old_thumbnail_id, true);
+                // Delete the old image file from media library if it was imported by our plugin
+                // Check if the image was imported by our plugin using the metadata we store
+                $was_imported_by_us = get_post_meta($old_thumbnail_id, '_imported_by_post_importer', true);
+                if ($was_imported_by_us) {
+                    // This image was imported by our plugin, safe to delete
+                    wp_delete_attachment($old_thumbnail_id, true);
+                }
             }
             
             // Handle categories (clear existing and add new)
@@ -637,7 +642,7 @@ class PostImporter {
             // Handle featured image replacement
             $image_imported = false;
             if (!empty($post_data['banner_url'])) {
-                $image_result = $this->handle_featured_image($post_id, $post_data['banner_url'], $post_data['title']);
+                $image_result = $this->handle_featured_image($post_id, $post_data['banner_url'], $post_data['title'], true);
                 if ($image_result) {
                     update_post_meta($post_id, '_banner_image_id', $image_result);
                     update_post_meta($post_id, '_banner_image_url', $post_data['banner_url']);
@@ -648,7 +653,7 @@ class PostImporter {
             }
             // Also try media_file_banner if banner_url is empty or failed
             elseif (!empty($post_data['media_file_banner']['path'])) {
-                $image_result = $this->handle_featured_image($post_id, $post_data['media_file_banner']['path'], $post_data['title']);
+                $image_result = $this->handle_featured_image($post_id, $post_data['media_file_banner']['path'], $post_data['title'], true);
                 if ($image_result) {
                     update_post_meta($post_id, '_banner_image_id', $image_result);
                     update_post_meta($post_id, '_banner_image_url', $post_data['media_file_banner']['path']);
@@ -798,46 +803,80 @@ class PostImporter {
         }
     }
     
-    private function handle_featured_image($post_id, $image_url, $post_title) {
+    private function handle_featured_image($post_id, $image_url, $post_title, $force_replace = false) {
         // Validate URL
         if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
+            error_log("Post Importer: Invalid image URL for post {$post_id}: {$image_url}");
             return false;
         }
         
-        // Check if image already exists in media library by URL
-        global $wpdb;
-        $existing_attachment = $wpdb->get_var($wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND guid = %s",
-            $image_url
-        ));
-        
-        if ($existing_attachment) {
-            // Use existing image
-            set_post_thumbnail($post_id, $existing_attachment);
-            return $existing_attachment;
+        // Ensure post thumbnail support is enabled
+        if (!current_theme_supports('post-thumbnails')) {
+            add_theme_support('post-thumbnails');
         }
         
-        // Check by filename to avoid duplicate downloads
-        $filename = basename(parse_url($image_url, PHP_URL_PATH));
-        if (!empty($filename)) {
-            $existing_by_filename = $wpdb->get_var($wpdb->prepare(
-                "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND post_title = %s OR post_name = %s",
-                pathinfo($filename, PATHINFO_FILENAME),
-                sanitize_title(pathinfo($filename, PATHINFO_FILENAME))
+        global $wpdb;
+        
+        // If not forcing replacement, check for existing images to reuse
+        if (!$force_replace) {
+            // Check if image already exists in media library by URL
+            $existing_attachment = $wpdb->get_var($wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND guid = %s",
+                $image_url
             ));
             
-            if ($existing_by_filename) {
-                // Use existing image with same filename
-                set_post_thumbnail($post_id, $existing_by_filename);
-                return $existing_by_filename;
+            if ($existing_attachment) {
+                // Use existing image
+                $result = set_post_thumbnail($post_id, $existing_attachment);
+                if ($result) {
+                    error_log("Post Importer: Reused existing image {$existing_attachment} for post {$post_id}");
+                    return $existing_attachment;
+                } else {
+                    error_log("Post Importer: Failed to set existing image {$existing_attachment} as thumbnail for post {$post_id}");
+                }
+            }
+            
+            // Check by filename to avoid duplicate downloads
+            $filename = basename(parse_url($image_url, PHP_URL_PATH));
+            if (!empty($filename)) {
+                $existing_by_filename = $wpdb->get_var($wpdb->prepare(
+                    "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND post_title = %s OR post_name = %s",
+                    pathinfo($filename, PATHINFO_FILENAME),
+                    sanitize_title(pathinfo($filename, PATHINFO_FILENAME))
+                ));
+                
+                if ($existing_by_filename) {
+                    // Use existing image with same filename
+                    $result = set_post_thumbnail($post_id, $existing_by_filename);
+                    if ($result) {
+                        error_log("Post Importer: Reused existing image by filename {$existing_by_filename} for post {$post_id}");
+                        return $existing_by_filename;
+                    } else {
+                        error_log("Post Importer: Failed to set existing image by filename {$existing_by_filename} as thumbnail for post {$post_id}");
+                    }
+                }
             }
         }
         
         // Download and set new featured image
-        $image_id = $this->download_image($image_url, $post_title);
+        $image_id = $this->download_image($image_url, $post_title, $post_id);
         
         if ($image_id && !is_wp_error($image_id)) {
-            set_post_thumbnail($post_id, $image_id);
+            // Set as featured image
+            $thumbnail_result = set_post_thumbnail($post_id, $image_id);
+            
+            if (!$thumbnail_result) {
+                error_log("Post Importer: Failed to set featured image for post ID {$post_id}, image ID {$image_id}");
+                return false;
+            }
+            
+            // Verify that the thumbnail was actually set
+            $current_thumbnail = get_post_thumbnail_id($post_id);
+            if ($current_thumbnail != $image_id) {
+                error_log("Post Importer: Thumbnail verification failed for post ID {$post_id}. Expected: {$image_id}, Got: {$current_thumbnail}");
+            } else {
+                error_log("Post Importer: Successfully set featured image for post ID {$post_id}, image ID {$image_id}");
+            }
             
             // Update the attachment post to have better title and alt text
             wp_update_post(array(
@@ -855,7 +894,7 @@ class PostImporter {
         return false;
     }
     
-    private function download_image($image_url, $description = '') {
+    private function download_image($image_url, $description = '', $post_id = 0) {
         require_once(ABSPATH . 'wp-admin/includes/media.php');
         require_once(ABSPATH . 'wp-admin/includes/file.php');
         require_once(ABSPATH . 'wp-admin/includes/image.php');
@@ -871,14 +910,19 @@ class PostImporter {
             return false;
         }
         
-        // Get the image
-        $image_id = media_sideload_image($image_url, 0, $description, 'id');
+        // Get the image and attach it to the post
+        $image_id = media_sideload_image($image_url, $post_id, $description, 'id');
         
         if (is_wp_error($image_id)) {
             // Log the error for debugging
             error_log('Post Importer: Failed to download image ' . $image_url . ': ' . $image_id->get_error_message());
             return false;
         }
+        
+        // Mark this image as imported by our plugin for future reference
+        update_post_meta($image_id, '_imported_by_post_importer', true);
+        update_post_meta($image_id, '_original_image_url', $image_url);
+        update_post_meta($image_id, '_import_timestamp', current_time('mysql'));
         
         return $image_id;
     }
@@ -1038,6 +1082,44 @@ class PostImporter {
         $wpdb->delete($failed_table, array('session_id' => $session_id));
         
         wp_send_json_success('Import reset successfully');
+    }
+    
+    /**
+     * Cleanup orphaned images that were imported but are no longer used
+     * This is a utility function that can be called manually if needed
+     */
+    public function cleanup_orphaned_images() {
+        global $wpdb;
+        
+        // Find all images imported by our plugin
+        $imported_images = $wpdb->get_results("
+            SELECT p.ID, p.post_title 
+            FROM {$wpdb->posts} p 
+            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id 
+            WHERE p.post_type = 'attachment' 
+            AND pm.meta_key = '_imported_by_post_importer' 
+            AND pm.meta_value = '1'
+        ");
+        
+        $deleted_count = 0;
+        
+        foreach ($imported_images as $image) {
+            // Check if this image is being used as a featured image
+            $used_as_featured = $wpdb->get_var($wpdb->prepare("
+                SELECT COUNT(*) 
+                FROM {$wpdb->postmeta} 
+                WHERE meta_key = '_thumbnail_id' 
+                AND meta_value = %d
+            ", $image->ID));
+            
+            // If not being used, delete it
+            if ($used_as_featured == 0) {
+                wp_delete_attachment($image->ID, true);
+                $deleted_count++;
+            }
+        }
+        
+        return $deleted_count;
     }
 }
 

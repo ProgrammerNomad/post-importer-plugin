@@ -223,7 +223,7 @@ jQuery(document).ready(function($) {
                     
                     // Log more details if available
                     if (data.imported > 0) {
-                        logMessage(`✓ Successfully reimported ${data.imported} posts with updated content and featured images`, 'success');
+                        logMessage(`✓ Successfully reimported ${data.imported} posts with updated content and replaced featured images`, 'success');
                     }
                     if (data.failed > 0) {
                         logMessage(`✗ Failed to reimport ${data.failed} posts - check WordPress error logs for details`, 'error');
