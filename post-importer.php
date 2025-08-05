@@ -4,7 +4,7 @@
  * Plugin URI: https://groundreport.in
  * Description: Import posts from JSON file with resumable functionality and AJAX processing
  * Version: 1.0.0
- * Author: Ground Report
+ * Author: Nomod Programmer
  * License: GPL v2 or later
  */
 
