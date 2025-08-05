@@ -25,6 +25,7 @@ class PostImporter {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_ajax_upload_json_file', array($this, 'handle_file_upload'));
         add_action('wp_ajax_import_posts_batch', array($this, 'import_posts_batch'));
+        add_action('wp_ajax_reimport_posts_batch', array($this, 'reimport_posts_batch'));
         add_action('wp_ajax_get_import_status', array($this, 'get_import_status'));
         add_action('wp_ajax_reset_import', array($this, 'reset_import'));
         
@@ -143,10 +144,11 @@ class PostImporter {
                         </div>
                         <div id="import-stats"></div>
                         <div id="import-controls">
-                            <button id="start-import" class="button-primary">Start Import</button>
+                            <button id="start-import" class="button-primary" style="display: none;">Start Import</button>
                             <button id="pause-import" class="button" style="display: none;">Pause Import</button>
                             <button id="resume-import" class="button" style="display: none;">Resume Import</button>
-                            <button id="reset-import" class="button button-secondary">Reset Import</button>
+                            <button id="reimport-posts" class="button button-secondary reimport-button" style="display: none;">Reimport & Replace</button>
+                            <button id="reset-import" class="button button-secondary" style="display: none;">Reset Import</button>
                         </div>
                     </div>
                 </div>
@@ -333,6 +335,87 @@ class PostImporter {
         ));
     }
     
+    public function reimport_posts_batch() {
+        check_ajax_referer('post_importer_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $session_id = sanitize_text_field($_POST['session_id']);
+        $batch_size = intval($_POST['batch_size']);
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'post_import_progress';
+        
+        // Get import session
+        $session = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        if (!$session) {
+            wp_send_json_error('Import session not found');
+            return;
+        }
+        
+        // Load JSON data
+        $posts_data = $this->analyze_json_file($session->file_path);
+        
+        if ($posts_data === false) {
+            wp_send_json_error('Unable to read JSON file');
+            return;
+        }
+        
+        // Calculate batch
+        $start_index = $session->processed_posts;
+        $end_index = min($start_index + $batch_size, count($posts_data));
+        
+        $batch_posts = array_slice($posts_data, $start_index, $batch_size);
+        
+        $imported_count = 0;
+        $failed_count = 0;
+        $skipped_count = 0;
+        
+        foreach ($batch_posts as $post_data) {
+            $result = $this->reimport_single_post($post_data, $session_id);
+            
+            if ($result === 'imported') {
+                $imported_count++;
+            } elseif ($result === 'failed') {
+                $failed_count++;
+            } else {
+                $skipped_count++;
+            }
+        }
+        
+        // Update progress
+        $new_processed = $session->processed_posts + count($batch_posts);
+        $new_failed = $session->failed_posts + $failed_count;
+        
+        $status = ($new_processed >= $session->total_posts) ? 'completed' : 'processing';
+        
+        $wpdb->update(
+            $table_name,
+            array(
+                'processed_posts' => $new_processed,
+                'failed_posts' => $new_failed,
+                'status' => $status
+            ),
+            array('session_id' => $session_id)
+        );
+        
+        wp_send_json_success(array(
+            'imported' => $imported_count,
+            'failed' => $failed_count,
+            'skipped' => $skipped_count,
+            'total_processed' => $new_processed,
+            'total_posts' => $session->total_posts,
+            'status' => $status,
+            'percentage' => round(($new_processed / $session->total_posts) * 100, 2)
+        ));
+    }
+    
     private function import_single_post($post_data, $session_id) {
         global $wpdb;
         
@@ -475,6 +558,175 @@ class PostImporter {
                     'session_id' => $session_id,
                     'post_data' => json_encode($post_data),
                     'error_message' => $e->getMessage()
+                )
+            );
+            
+            return 'failed';
+        }
+    }
+    
+    private function reimport_single_post($post_data, $session_id, $force_replace = true) {
+        global $wpdb;
+        
+        try {
+            // Find existing post by slug or original post ID
+            $existing_post = get_page_by_path($post_data['slug'], OBJECT, 'post');
+            
+            if (!$existing_post) {
+                // Also check by original post ID
+                $existing_by_original_id = get_posts(array(
+                    'meta_key' => '_original_post_id',
+                    'meta_value' => $post_data['id'],
+                    'post_type' => 'post',
+                    'post_status' => 'any',
+                    'numberposts' => 1
+                ));
+                
+                if (!empty($existing_by_original_id)) {
+                    $existing_post = $existing_by_original_id[0];
+                }
+            }
+            
+            if (!$existing_post) {
+                // Post doesn't exist, so import it as new
+                return $this->import_single_post($post_data, $session_id);
+            }
+            
+            $post_id = $existing_post->ID;
+            
+            // Update the existing post with new data
+            $wp_post_data = array(
+                'ID' => $post_id,
+                'post_title' => sanitize_text_field($post_data['title']),
+                'post_content' => wp_kses_post($post_data['content']),
+                'post_excerpt' => sanitize_text_field(!empty($post_data['short_description']) ? $post_data['short_description'] : $post_data['summary']),
+                'post_name' => sanitize_title($post_data['slug']),
+                'post_status' => 'publish',
+                'post_date' => $this->parse_date($post_data['formatted_first_published_at_datetime']),
+                'post_modified' => $this->parse_date($post_data['formatted_last_published_at_datetime'])
+            );
+            
+            // Update post
+            $result = wp_update_post($wp_post_data);
+            
+            if (is_wp_error($result)) {
+                throw new Exception($result->get_error_message());
+            }
+            
+            // Remove existing featured image if replacing
+            if ($force_replace && has_post_thumbnail($post_id)) {
+                $old_thumbnail_id = get_post_thumbnail_id($post_id);
+                delete_post_thumbnail($post_id);
+                
+                // Optionally delete the old image file from media library
+                // wp_delete_attachment($old_thumbnail_id, true);
+            }
+            
+            // Handle categories (clear existing and add new)
+            wp_set_post_categories($post_id, array()); // Clear existing categories
+            if (!empty($post_data['categories'])) {
+                $this->handle_categories($post_id, $post_data['categories']);
+            }
+            
+            // Handle tags (clear existing and add new)
+            wp_set_post_terms($post_id, array(), 'post_tag'); // Clear existing tags
+            if (!empty($post_data['tags'])) {
+                $this->handle_tags($post_id, $post_data['tags']);
+            }
+            
+            // Handle featured image replacement
+            $image_imported = false;
+            if (!empty($post_data['banner_url'])) {
+                $image_result = $this->handle_featured_image($post_id, $post_data['banner_url'], $post_data['title']);
+                if ($image_result) {
+                    update_post_meta($post_id, '_banner_image_id', $image_result);
+                    update_post_meta($post_id, '_banner_image_url', $post_data['banner_url']);
+                    $image_imported = true;
+                } else {
+                    error_log("Post Importer: Failed to reimport featured image for post ID {$post_id}, banner_url: {$post_data['banner_url']}");
+                }
+            }
+            // Also try media_file_banner if banner_url is empty or failed
+            elseif (!empty($post_data['media_file_banner']['path'])) {
+                $image_result = $this->handle_featured_image($post_id, $post_data['media_file_banner']['path'], $post_data['title']);
+                if ($image_result) {
+                    update_post_meta($post_id, '_banner_image_id', $image_result);
+                    update_post_meta($post_id, '_banner_image_url', $post_data['media_file_banner']['path']);
+                    $image_imported = true;
+                } else {
+                    error_log("Post Importer: Failed to reimport featured image for post ID {$post_id}, media_file_banner path: {$post_data['media_file_banner']['path']}");
+                }
+            }
+            
+            // Update image import status
+            update_post_meta($post_id, '_featured_image_imported', $image_imported ? 'yes' : 'no');
+            update_post_meta($post_id, '_last_reimported', current_time('mysql'));
+            
+            // Handle author from member field
+            if (!empty($post_data['member'])) {
+                $this->handle_author($post_id, $post_data['member']);
+            }
+            
+            // Handle contributors (clear existing and add new)
+            if (!empty($post_data['contributors'])) {
+                // Clear existing contributor meta
+                delete_post_meta($post_id, '_contributors');
+                delete_post_meta($post_id, '_contributors_data');
+                $this->handle_contributors($post_id, $post_data['contributors']);
+            }
+            
+            // Handle updated_by author info
+            if (!empty($post_data['updated_by'])) {
+                $this->handle_updated_by($post_id, $post_data['updated_by']);
+            }
+            
+            // Handle meta data (replace existing)
+            if (!empty($post_data['meta_data'])) {
+                $this->handle_meta_data($post_id, $post_data['meta_data']);
+            }
+            
+            // Update comprehensive meta data for reference
+            update_post_meta($post_id, '_original_post_id', $post_data['id']);
+            update_post_meta($post_id, '_import_session_id', $session_id);
+            update_post_meta($post_id, '_original_url', !empty($post_data['absolute_url']) ? $post_data['absolute_url'] : '');
+            update_post_meta($post_id, '_legacy_url', !empty($post_data['legacy_url']) ? $post_data['legacy_url'] : '');
+            update_post_meta($post_id, '_word_count', !empty($post_data['word_count']) ? $post_data['word_count'] : 0);
+            update_post_meta($post_id, '_article_type', !empty($post_data['type']) ? $post_data['type'] : 'Article');
+            update_post_meta($post_id, '_language_code', !empty($post_data['language_code']) ? $post_data['language_code'] : 'en');
+            update_post_meta($post_id, '_access_type', !empty($post_data['access_type']) ? $post_data['access_type'] : 'Public');
+            update_post_meta($post_id, '_summary', !empty($post_data['summary']) ? $post_data['summary'] : '');
+            update_post_meta($post_id, '_banner_description', !empty($post_data['banner_description']) ? $post_data['banner_description'] : '');
+            update_post_meta($post_id, '_hide_banner_image', !empty($post_data['hide_banner_image']) ? $post_data['hide_banner_image'] : null);
+            
+            // Store media file banner info if available
+            if (!empty($post_data['media_file_banner'])) {
+                update_post_meta($post_id, '_media_file_banner', json_encode($post_data['media_file_banner']));
+            }
+            
+            // Store cache tags if available
+            if (!empty($post_data['Cache-Tags'])) {
+                update_post_meta($post_id, '_cache_tags', json_encode($post_data['Cache-Tags']));
+            }
+            
+            // Handle primary category if specified
+            if (!empty($post_data['primary_category'])) {
+                $primary_cat_id = $this->get_or_create_category($post_data['primary_category']['name'], $post_data['primary_category']['slug']);
+                if ($primary_cat_id) {
+                    update_post_meta($post_id, '_yoast_wpseo_primary_category', $primary_cat_id);
+                }
+            }
+            
+            return 'imported';
+            
+        } catch (Exception $e) {
+            // Log failed post
+            $failed_table = $wpdb->prefix . 'post_import_failed';
+            $wpdb->insert(
+                $failed_table,
+                array(
+                    'session_id' => $session_id,
+                    'post_data' => json_encode($post_data),
+                    'error_message' => 'Reimport failed: ' . $e->getMessage()
                 )
             );
             

@@ -70,6 +70,18 @@
     margin-right: 10px;
 }
 
+/* Reimport button styling */
+.reimport-button {
+    background-color: #ff9800 !important;
+    color: white !important;
+    border-color: #f57c00 !important;
+}
+
+.reimport-button:hover {
+    background-color: #f57c00 !important;
+    border-color: #ef6c00 !important;
+}
+
 #import-log {
     max-height: 400px;
     overflow-y: auto;

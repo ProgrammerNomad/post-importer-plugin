@@ -2,6 +2,7 @@ jQuery(document).ready(function($) {
     let currentSessionId = null;
     let importRunning = false;
     let importPaused = false;
+    let isReimporting = false;
     
     // File upload form submission
     $('#upload-form').on('submit', function(e) {
@@ -37,6 +38,11 @@ jQuery(document).ready(function($) {
                     currentSessionId = response.data.session_id;
                     displayImportInfo(response.data);
                     $('#status-section').show();
+                    
+                    // Show all control buttons when file is analyzed
+                    $('#start-import').show();
+                    $('#reimport-posts').show();
+                    $('#reset-import').show();
                 } else {
                     alert('Error: ' + response.data);
                 }
@@ -89,6 +95,18 @@ jQuery(document).ready(function($) {
         }
     });
     
+    // Reimport posts
+    $('#reimport-posts').on('click', function() {
+        if (!currentSessionId) {
+            alert('No import session found');
+            return;
+        }
+        
+        if (confirm('Are you sure you want to reimport posts? This will replace existing posts and their featured images with the content from the JSON file.')) {
+            startReimport();
+        }
+    });
+    
     function displayImportInfo(data) {
         const html = `
             <p><strong>Total Posts:</strong> ${data.total_posts}</p>
@@ -109,6 +127,19 @@ jQuery(document).ready(function($) {
         
         logMessage('Starting import process...');
         continueImport();
+    }
+    
+    function startReimport() {
+        importRunning = true;
+        importPaused = false;
+        
+        $('#start-import').hide();
+        $('#reimport-posts').hide();
+        $('#pause-import').show();
+        $('#log-section').show();
+        
+        logMessage('Starting reimport process (will replace existing posts and images)...');
+        continueReimport();
     }
     
     function continueImport() {
@@ -166,6 +197,62 @@ jQuery(document).ready(function($) {
         });
     }
     
+    function continueReimport() {
+        if (!importRunning || importPaused) {
+            return;
+        }
+        
+        $.ajax({
+            url: postImporter.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'reimport_posts_batch',
+                session_id: currentSessionId,
+                batch_size: postImporter.batch_size,
+                nonce: postImporter.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    const data = response.data;
+                    
+                    updateProgress(data.total_processed, data.total_posts, data.percentage);
+                    updateStats(data);
+                    
+                    const statusMsg = `Reimport batch completed: ${data.imported} reimported, ${data.failed} failed, ${data.skipped} skipped`;
+                    logMessage(statusMsg);
+                    
+                    // Log more details if available
+                    if (data.imported > 0) {
+                        logMessage(`✓ Successfully reimported ${data.imported} posts with updated content and featured images`, 'success');
+                    }
+                    if (data.failed > 0) {
+                        logMessage(`✗ Failed to reimport ${data.failed} posts - check WordPress error logs for details`, 'error');
+                    }
+                    if (data.skipped > 0) {
+                        logMessage(`⚠ Skipped ${data.skipped} posts (no existing post found, imported as new)`, 'info');
+                    }
+                    
+                    if (data.status === 'completed') {
+                        reimportCompleted();
+                    } else if (!importPaused) {
+                        // Continue with next batch after a short delay
+                        setTimeout(continueReimport, 500);
+                    }
+                } else {
+                    logMessage('Error: ' + response.data, 'error');
+                    importRunning = false;
+                    $('#pause-import').hide();
+                    $('#start-import').show();
+                    $('#reimport-posts').show();
+                }
+            },
+            error: function() {
+                logMessage('AJAX error occurred. Retrying in 5 seconds...', 'error');
+                setTimeout(continueReimport, 5000);
+            }
+        });
+    }
+    
     function updateProgress(processed, total, percentage) {
         $('#progress-fill').css('width', percentage + '%');
         $('#progress-text').text(percentage + '% (' + processed + '/' + total + ')');
@@ -187,6 +274,19 @@ jQuery(document).ready(function($) {
         $('#start-import').show();
         
         logMessage('Import completed successfully!', 'success');
+        
+        // Show completion summary
+        getImportStatus();
+    }
+    
+    function reimportCompleted() {
+        importRunning = false;
+        $('#pause-import').hide();
+        $('#resume-import').hide();
+        $('#start-import').show();
+        $('#reimport-posts').show();
+        
+        logMessage('Reimport completed successfully! All posts and featured images have been updated.', 'success');
         
         // Show completion summary
         getImportStatus();
