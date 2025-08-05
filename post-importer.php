@@ -386,13 +386,32 @@ class PostImporter {
             }
             
             // Handle featured image from banner_url
+            $image_imported = false;
             if (!empty($post_data['banner_url'])) {
-                $this->handle_featured_image($post_id, $post_data['banner_url'], $post_data['title']);
+                $image_result = $this->handle_featured_image($post_id, $post_data['banner_url'], $post_data['title']);
+                if ($image_result) {
+                    update_post_meta($post_id, '_banner_image_id', $image_result);
+                    update_post_meta($post_id, '_banner_image_url', $post_data['banner_url']);
+                    $image_imported = true;
+                } else {
+                    // Log that featured image failed to import but don't fail the whole post
+                    error_log("Post Importer: Failed to import featured image for post ID {$post_id}, banner_url: {$post_data['banner_url']}");
+                }
             }
-            // Also try media_file_banner if banner_url is empty
+            // Also try media_file_banner if banner_url is empty or failed
             elseif (!empty($post_data['media_file_banner']['path'])) {
-                $this->handle_featured_image($post_id, $post_data['media_file_banner']['path'], $post_data['title']);
+                $image_result = $this->handle_featured_image($post_id, $post_data['media_file_banner']['path'], $post_data['title']);
+                if ($image_result) {
+                    update_post_meta($post_id, '_banner_image_id', $image_result);
+                    update_post_meta($post_id, '_banner_image_url', $post_data['media_file_banner']['path']);
+                    $image_imported = true;
+                } else {
+                    error_log("Post Importer: Failed to import featured image for post ID {$post_id}, media_file_banner path: {$post_data['media_file_banner']['path']}");
+                }
             }
+            
+            // Log image import status
+            update_post_meta($post_id, '_featured_image_imported', $image_imported ? 'yes' : 'no');
             
             // Handle author from member field
             if (!empty($post_data['member'])) {
@@ -528,6 +547,11 @@ class PostImporter {
     }
     
     private function handle_featured_image($post_id, $image_url, $post_title) {
+        // Validate URL
+        if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+        
         // Check if image already exists in media library by URL
         global $wpdb;
         $existing_attachment = $wpdb->get_var($wpdb->prepare(
@@ -538,28 +562,45 @@ class PostImporter {
         if ($existing_attachment) {
             // Use existing image
             set_post_thumbnail($post_id, $existing_attachment);
-            return;
+            return $existing_attachment;
         }
         
         // Check by filename to avoid duplicate downloads
         $filename = basename(parse_url($image_url, PHP_URL_PATH));
-        $existing_by_filename = $wpdb->get_var($wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND post_title = %s",
-            pathinfo($filename, PATHINFO_FILENAME)
-        ));
-        
-        if ($existing_by_filename) {
-            // Use existing image with same filename
-            set_post_thumbnail($post_id, $existing_by_filename);
-            return;
+        if (!empty($filename)) {
+            $existing_by_filename = $wpdb->get_var($wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'attachment' AND post_title = %s OR post_name = %s",
+                pathinfo($filename, PATHINFO_FILENAME),
+                sanitize_title(pathinfo($filename, PATHINFO_FILENAME))
+            ));
+            
+            if ($existing_by_filename) {
+                // Use existing image with same filename
+                set_post_thumbnail($post_id, $existing_by_filename);
+                return $existing_by_filename;
+            }
         }
         
         // Download and set new featured image
         $image_id = $this->download_image($image_url, $post_title);
         
-        if ($image_id) {
+        if ($image_id && !is_wp_error($image_id)) {
             set_post_thumbnail($post_id, $image_id);
+            
+            // Update the attachment post to have better title and alt text
+            wp_update_post(array(
+                'ID' => $image_id,
+                'post_title' => $post_title,
+                'post_excerpt' => $post_title, // Caption
+            ));
+            
+            // Set alt text
+            update_post_meta($image_id, '_wp_attachment_image_alt', $post_title);
+            
+            return $image_id;
         }
+        
+        return false;
     }
     
     private function download_image($image_url, $description = '') {
@@ -567,9 +608,27 @@ class PostImporter {
         require_once(ABSPATH . 'wp-admin/includes/file.php');
         require_once(ABSPATH . 'wp-admin/includes/image.php');
         
+        // Validate URL
+        if (!filter_var($image_url, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+        
+        // Check if URL is accessible
+        $response = wp_remote_head($image_url);
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) != 200) {
+            return false;
+        }
+        
+        // Get the image
         $image_id = media_sideload_image($image_url, 0, $description, 'id');
         
-        return is_wp_error($image_id) ? false : $image_id;
+        if (is_wp_error($image_id)) {
+            // Log the error for debugging
+            error_log('Post Importer: Failed to download image ' . $image_url . ': ' . $image_id->get_error_message());
+            return false;
+        }
+        
+        return $image_id;
     }
     
     private function handle_author($post_id, $author_data) {
@@ -735,6 +794,11 @@ require_once POST_IMPORTER_PLUGIN_DIR . 'config.php';
 
 // Include installer
 require_once POST_IMPORTER_PLUGIN_DIR . 'installer.php';
+
+// Include debug tools (only in development)
+if (defined('WP_DEBUG') && WP_DEBUG) {
+    require_once POST_IMPORTER_PLUGIN_DIR . 'debug.php';
+}
 
 // Initialize the plugin
 new PostImporter();

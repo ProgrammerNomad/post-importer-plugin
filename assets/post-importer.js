@@ -132,7 +132,19 @@ jQuery(document).ready(function($) {
                     updateProgress(data.total_processed, data.total_posts, data.percentage);
                     updateStats(data);
                     
-                    logMessage(`Batch completed: ${data.imported} imported, ${data.failed} failed, ${data.skipped} skipped`);
+                    const statusMsg = `Batch completed: ${data.imported} imported, ${data.failed} failed, ${data.skipped} skipped`;
+                    logMessage(statusMsg);
+                    
+                    // Log more details if available
+                    if (data.imported > 0) {
+                        logMessage(`✓ Successfully imported ${data.imported} posts with content and featured images`, 'success');
+                    }
+                    if (data.failed > 0) {
+                        logMessage(`✗ Failed to import ${data.failed} posts - check WordPress error logs for details`, 'error');
+                    }
+                    if (data.skipped > 0) {
+                        logMessage(`⚠ Skipped ${data.skipped} posts (already exist)`, 'info');
+                    }
                     
                     if (data.status === 'completed') {
                         importCompleted();
