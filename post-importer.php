@@ -547,6 +547,32 @@ class PostImporter {
                 }
             }
             
+            // Handle content with images - add this after the post is created
+            $content_fields = ['content', 'content_html', 'post_content', 'body'];
+            $original_content = '';
+
+            foreach ($content_fields as $field) {
+                if (isset($post_data[$field]) && !empty($post_data[$field])) {
+                    $original_content = $post_data[$field];
+                    break;
+                }
+            }
+
+            if (!empty($original_content)) {
+                error_log("Post Importer: Found content to process for post {$post_id}");
+                
+                // Process images in content BEFORE setting other meta data
+                $processed_content = $this->process_content_images($original_content, $post_id, $post_data['title'] ?? '');
+                
+                // Update the post with processed content
+                wp_update_post(array(
+                    'ID' => $post_id,
+                    'post_content' => $processed_content
+                ));
+                
+                error_log("Post Importer: Updated post {$post_id} content with processed images");
+            }
+            
             return 'imported';
             
         } catch (Exception $e) {
@@ -719,6 +745,32 @@ class PostImporter {
                 if ($primary_cat_id) {
                     update_post_meta($post_id, '_yoast_wpseo_primary_category', $primary_cat_id);
                 }
+            }
+            
+            // Handle content with images during reimport
+            $content_fields = ['content', 'content_html', 'post_content', 'body'];
+            $original_content = '';
+
+            foreach ($content_fields as $field) {
+                if (isset($post_data[$field]) && !empty($post_data[$field])) {
+                    $original_content = $post_data[$field];
+                    break;
+                }
+            }
+
+            if (!empty($original_content)) {
+                error_log("Post Importer: Processing content images during reimport for post {$post_id}");
+                
+                // Process images in content (force download new images during reimport)
+                $processed_content = $this->process_content_images($original_content, $post_id, $post_data['title'] ?? '');
+                
+                // Update the post with processed content
+                wp_update_post(array(
+                    'ID' => $post_id,
+                    'post_content' => $processed_content
+                ));
+                
+                error_log("Post Importer: Updated post {$post_id} content with processed images during reimport");
             }
             
             return 'imported';
@@ -952,8 +1004,22 @@ class PostImporter {
             return false;
         }
         
+        // Check if image already exists in media library by URL (avoid duplicates)
+        global $wpdb;
+        $existing_attachment = $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} 
+             WHERE post_type = 'attachment' 
+             AND (guid = %s OR post_content = %s)",
+            $image_url, $image_url
+        ));
+        
+        if ($existing_attachment) {
+            error_log("Post Importer: Reusing existing image ID: {$existing_attachment} for URL: {$image_url}");
+            return $existing_attachment;
+        }
+        
         // Check if URL is accessible
-        $response = wp_remote_head($image_url);
+        $response = wp_remote_head($image_url, array('timeout' => 30));
         if (is_wp_error($response)) {
             error_log("Post Importer: URL check failed - WP Error: " . $response->get_error_message());
             return false;
@@ -1219,6 +1285,133 @@ class PostImporter {
         }
         
         return $deleted_count;
+    }
+
+    private function process_content_images($content, $post_id, $post_title = '') {
+        if (empty($content)) {
+            return $content;
+        }
+        
+        error_log("Post Importer: Starting content image processing for post {$post_id}");
+        
+        // Find all image URLs in the content (various formats)
+        $patterns = [
+            // Standard img tags
+            '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i',
+            // WordPress figure blocks with images
+            '/<figure[^>]*class="[^"]*wp-block-image[^"]*"[^>]*>.*?<img[^>]+src=["\']([^"\']+)["\'][^>]*>.*?<\/figure>/is',
+        ];
+        
+        $updated_content = $content;
+        $processed_urls = []; // Avoid processing same URL multiple times
+        $images_processed = 0;
+        
+        foreach ($patterns as $pattern) {
+            preg_match_all($pattern, $content, $matches, PREG_SET_ORDER);
+            
+            foreach ($matches as $match) {
+                $full_img_tag = $match[0];
+                $image_url = $match[1];
+                
+                // Skip if already processed or is local WordPress URL
+                if (in_array($image_url, $processed_urls) || 
+                    strpos($image_url, site_url()) !== false ||
+                    strpos($image_url, home_url()) !== false) {
+                    continue;
+                }
+                
+                // Skip data URLs, relative URLs, or invalid URLs
+                if (strpos($image_url, 'data:') === 0 || 
+                    strpos($image_url, '//') === 0 || 
+                    strpos($image_url, '/') === 0 ||
+                    !filter_var($image_url, FILTER_VALIDATE_URL)) {
+                    continue;
+                }
+                
+                error_log("Post Importer: Processing content image: {$image_url}");
+                
+                // Extract alt text and other attributes
+                $alt_text = '';
+                if (preg_match('/alt=["\']([^"\']*)["\']/', $full_img_tag, $alt_match)) {
+                    $alt_text = $alt_match[1];
+                }
+                
+                // Extract class attributes
+                $css_classes = '';
+                if (preg_match('/class=["\']([^"\']*)["\']/', $full_img_tag, $class_match)) {
+                    $css_classes = $class_match[1];
+                }
+                
+                // Extract width and height
+                $width = '';
+                $height = '';
+                if (preg_match('/width=["\']([^"\']*)["\']/', $full_img_tag, $width_match)) {
+                    $width = $width_match[1];
+                }
+                if (preg_match('/height=["\']([^"\']*)["\']/', $full_img_tag, $height_match)) {
+                    $height = $height_match[1];
+                }
+                
+                // Download and import the image
+                $description = $alt_text ?: ($post_title ? "Content image from: " . $post_title : "Content Image");
+                $image_id = $this->download_image($image_url, $description, $post_id);
+                
+                if ($image_id && !is_wp_error($image_id) && is_numeric($image_id)) {
+                    // Get the new local URL and attachment details
+                    $new_image_url = wp_get_attachment_url($image_id);
+                    $attachment = get_post($image_id);
+                    
+                    if ($new_image_url && $attachment) {
+                        // Update alt text if we have it
+                        if ($alt_text) {
+                            update_post_meta($image_id, '_wp_attachment_image_alt', $alt_text);
+                        }
+                        
+                        // Create new img tag with WordPress attributes
+                        $new_img_attributes = [
+                            'src="' . esc_url($new_image_url) . '"',
+                            'alt="' . esc_attr($alt_text) . '"',
+                            'class="wp-image-' . $image_id . ($css_classes ? ' ' . esc_attr($css_classes) : '') . '"'
+                        ];
+                        
+                        // Preserve width and height if they exist
+                        if ($width) {
+                            $new_img_attributes[] = 'width="' . esc_attr($width) . '"';
+                        }
+                        if ($height) {
+                            $new_img_attributes[] = 'height="' . esc_attr($height) . '"';
+                        }
+                        
+                        // Create the new img tag
+                        $new_img_tag = '<img ' . implode(' ', $new_img_attributes) . ' />';
+                        
+                        // Replace the old img tag with the new one
+                        $updated_content = str_replace($full_img_tag, $new_img_tag, $updated_content);
+                        
+                        error_log("Post Importer: Replaced content image - Old: {$image_url} -> New: {$new_image_url} (ID: {$image_id})");
+                        
+                        $processed_urls[] = $image_url;
+                        $images_processed++;
+                        
+                        // Mark this as a content image for tracking
+                        update_post_meta($image_id, '_is_content_image', true);
+                        update_post_meta($image_id, '_content_image_post_id', $post_id);
+                    } else {
+                        error_log("Post Importer: Failed to get attachment URL for image ID: {$image_id}");
+                    }
+                } else {
+                    error_log("Post Importer: Failed to download content image: {$image_url}");
+                }
+            }
+        }
+        
+        if ($images_processed > 0) {
+            error_log("Post Importer: Processed {$images_processed} content images for post {$post_id}");
+            // Store count of content images for reference
+            update_post_meta($post_id, '_content_images_count', $images_processed);
+        }
+        
+        return $updated_content;
     }
 }
 

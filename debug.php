@@ -114,6 +114,11 @@ add_action('admin_notices', function() {
         echo "Fixed {$results['fixed']} posts, failed to fix {$results['failed']} posts.";
         echo '</p></div>';
     }
+    
+    // Handle test content image processing
+    if (current_user_can('manage_options') && isset($_GET['test_content_images'])) {
+        test_content_image_processing();
+    }
 });
 
 // Function to verify featured image assignments
@@ -257,3 +262,41 @@ add_action('admin_menu', function() {
         );
     }
 });
+
+// Add this function to debug.php
+function test_content_image_processing() {
+    // Sample content with images for testing
+    $test_content = '<p>This is a test post with images.</p>
+    <img src="https://img-cdn.publive.online/fit-in/640x480/filters:format(webp)/ground-report/media/images/test-image.jpg" alt="Test Image" class="aligncenter" />
+    <p>Some more content here.</p>
+    <figure class="wp-block-image">
+        <img src="https://example.com/another-test-image.jpg" alt="Another Test Image" />
+    </figure>';
+    
+    // Create a test post
+    $test_post_id = wp_insert_post(array(
+        'post_title' => 'Content Image Test - ' . date('Y-m-d H:i:s'),
+        'post_content' => $test_content,
+        'post_status' => 'draft',
+        'post_type' => 'post'
+    ));
+    
+    if ($test_post_id && !is_wp_error($test_post_id)) {
+        // Process the content images
+        $importer = new PostImporter();
+        $processed_content = $importer->process_content_images($test_content, $test_post_id, 'Test Post');
+        
+        // Update the post with processed content
+        wp_update_post(array(
+            'ID' => $test_post_id,
+            'post_content' => $processed_content
+        ));
+        
+        echo '<div class="notice notice-success"><p>';
+        echo '<strong>Content Image Test:</strong> Created test post ID ' . $test_post_id . ' with processed images.';
+        echo '<br><a href="' . get_edit_post_link($test_post_id) . '" target="_blank">Edit Test Post</a>';
+        echo '</p></div>';
+    } else {
+        echo '<div class="notice notice-error"><p>Failed to create test post.</p></div>';
+    }
+}
