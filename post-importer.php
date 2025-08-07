@@ -1462,6 +1462,32 @@ class PostImporter {
             )
         ));
         
+        register_rest_route('post-importer/v1', '/update-images', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'api_update_images'),
+            'permission_callback' => array($this, 'api_permission_check'),
+            'args' => array(
+                'post_data' => array(
+                    'required' => true,
+                    'type' => 'object'
+                ),
+                'api_key' => array(
+                    'required' => true,
+                    'type' => 'string'
+                ),
+                'force_replace' => array(
+                    'required' => false,
+                    'type' => 'boolean',
+                    'default' => true
+                ),
+                'update_images_only' => array(
+                    'required' => false,
+                    'type' => 'boolean',
+                    'default' => false
+                )
+            )
+        ));
+        
         register_rest_route('post-importer/v1', '/status', array(
             'methods' => 'GET',
             'callback' => array($this, 'api_get_status'),
@@ -1594,6 +1620,172 @@ class PostImporter {
             ), 500);
         } catch (Error $e) {
             error_log("Post Importer API: Fatal error importing post '{$post_data['title']}': " . $e->getMessage());
+            
+            return new WP_REST_Response(array(
+                'success' => false,
+                'error' => 'Fatal error: ' . $e->getMessage(),
+                'post_data' => $post_data['title'] ?? 'Unknown'
+            ), 500);
+        }
+    }
+
+    public function api_update_images($request) {
+        $post_data = $request->get_param('post_data');
+        $force_replace = $request->get_param('force_replace') ?: true;
+        $update_images_only = $request->get_param('update_images_only') ?: false;
+        
+        try {
+            // Add error logging and validation
+            error_log("Post Importer API: Starting image update for post: " . ($post_data['title'] ?? 'Unknown'));
+            
+            // Validate required fields
+            if (empty($post_data['title']) || empty($post_data['slug'])) {
+                throw new Exception('Missing required fields: title or slug');
+            }
+            
+            // Increase memory and execution limits for API requests
+            if (function_exists('ini_set')) {
+                ini_set('memory_limit', '512M');
+                ini_set('max_execution_time', 120);
+            }
+            
+            // Find existing post by slug or original post ID
+            $existing_post = get_page_by_path($post_data['slug'], OBJECT, 'post');
+            
+            if (!$existing_post) {
+                // Also check by original post ID
+                $existing_by_original_id = get_posts(array(
+                    'meta_key' => '_original_post_id',
+                    'meta_value' => $post_data['id'],
+                    'post_type' => 'post',
+                    'post_status' => 'any',
+                    'numberposts' => 1
+                ));
+                
+                if (!empty($existing_by_original_id)) {
+                    $existing_post = $existing_by_original_id[0];
+                }
+            }
+            
+            if (!$existing_post) {
+                throw new Exception("Post not found: {$post_data['title']}");
+            }
+            
+            $post_id = $existing_post->ID;
+            $images_updated = array();
+            
+            // Update featured image
+            $featured_image_updated = false;
+            if (!empty($post_data['banner_url'])) {
+                $old_thumbnail_id = get_post_thumbnail_id($post_id);
+                
+                $image_result = $this->handle_featured_image($post_id, $post_data['banner_url'], $post_data['title'], $force_replace);
+                if ($image_result) {
+                    $featured_image_updated = true;
+                    $images_updated[] = 'featured_image';
+                    update_post_meta($post_id, '_banner_image_id', $image_result);
+                    update_post_meta($post_id, '_banner_image_url', $post_data['banner_url']);
+                    
+                    // Clean up old image if force_replace is true
+                    if ($force_replace && $old_thumbnail_id && $old_thumbnail_id != $image_result) {
+                        $this->cleanup_old_featured_image($post_id, $old_thumbnail_id);
+                    }
+                    
+                    error_log("Post Importer API: Updated featured image for post ID {$post_id}");
+                } else {
+                    error_log("Post Importer API: Failed to update featured image for post ID {$post_id}");
+                }
+            }
+            
+            // Also try media_file_banner if banner_url is empty or failed
+            if (!$featured_image_updated && !empty($post_data['media_file_banner']['path'])) {
+                $old_thumbnail_id = get_post_thumbnail_id($post_id);
+                
+                $image_result = $this->handle_featured_image($post_id, $post_data['media_file_banner']['path'], $post_data['title'], $force_replace);
+                if ($image_result) {
+                    $featured_image_updated = true;
+                    $images_updated[] = 'featured_image_from_media_banner';
+                    update_post_meta($post_id, '_banner_image_id', $image_result);
+                    update_post_meta($post_id, '_banner_image_url', $post_data['media_file_banner']['path']);
+                    
+                    // Clean up old image if force_replace is true
+                    if ($force_replace && $old_thumbnail_id && $old_thumbnail_id != $image_result) {
+                        $this->cleanup_old_featured_image($post_id, $old_thumbnail_id);
+                    }
+                    
+                    error_log("Post Importer API: Updated featured image from media_file_banner for post ID {$post_id}");
+                }
+            }
+            
+            // Update content images
+            $content_images_updated = false;
+            $content_fields = ['content', 'content_html', 'post_content', 'body'];
+            $original_content = '';
+
+            foreach ($content_fields as $field) {
+                if (isset($post_data[$field]) && !empty($post_data[$field])) {
+                    $original_content = $post_data[$field];
+                    break;
+                }
+            }
+
+            if (!empty($original_content)) {
+                error_log("Post Importer API: Processing content images for post {$post_id}");
+                
+                // Process images in content and replace with new URLs
+                $processed_content = $this->process_content_images($original_content, $post_id, $post_data['title'] ?? '');
+                
+                // Check if content was actually changed
+                if ($processed_content !== $original_content) {
+                    // Update the post content with processed images
+                    wp_update_post(array(
+                        'ID' => $post_id,
+                        'post_content' => $processed_content
+                    ));
+                    
+                    $content_images_updated = true;
+                    $images_updated[] = 'content_images';
+                    
+                    error_log("Post Importer API: Updated content images for post {$post_id}");
+                } else {
+                    error_log("Post Importer API: No content images needed updating for post {$post_id}");
+                }
+            }
+            
+            // Update metadata
+            update_post_meta($post_id, '_last_image_update_date', current_time('mysql'));
+            update_post_meta($post_id, '_image_update_count', intval(get_post_meta($post_id, '_image_update_count', true)) + 1);
+            
+            $result_message = empty($images_updated) ? 'no_images_updated' : 'images_updated';
+            
+            // Track the updated post ID
+            $response_data = array(
+                'success' => true,
+                'result' => $result_message,
+                'message' => "Images updated for post '{$post_data['title']}'",
+                'post_id' => $post_id,
+                'images_updated' => $images_updated,
+                'featured_image_updated' => $featured_image_updated,
+                'content_images_updated' => $content_images_updated,
+                'force_replace' => $force_replace
+            );
+            
+            error_log("Post Importer API: Image update result for '{$post_data['title']}': {$result_message}");
+            
+            return new WP_REST_Response($response_data, 200);
+            
+        } catch (Exception $e) {
+            error_log("Post Importer API: Error updating images for post '{$post_data['title']}': " . $e->getMessage());
+            error_log("Post Importer API: Stack trace: " . $e->getTraceAsString());
+            
+            return new WP_REST_Response(array(
+                'success' => false,
+                'error' => $e->getMessage(),
+                'post_data' => $post_data['title'] ?? 'Unknown',
+                'trace' => WP_DEBUG ? $e->getTraceAsString() : null
+            ), 500);
+        } catch (Error $e) {
+            error_log("Post Importer API: Fatal error updating images for post '{$post_data['title']}': " . $e->getMessage());
             
             return new WP_REST_Response(array(
                 'success' => false,
