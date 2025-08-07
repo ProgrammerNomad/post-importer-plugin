@@ -179,11 +179,23 @@ jQuery(document).ready(function($) {
     });
     
     function displayImportInfo(data) {
-        const html = `
+        let html = `
             <p><strong>Total Posts:</strong> ${data.total_posts}</p>
             <p><strong>File:</strong> ${data.file_path}</p>
             <p><strong>Session ID:</strong> ${data.session_id}</p>
         `;
+        
+        if (data.file_size) {
+            html += `<p><strong>File Size:</strong> ${data.file_size}</p>`;
+        }
+        
+        html += `
+            <div class="notice notice-info inline">
+                <p><strong>Date Handling:</strong> Posts will be published with their original dates from the JSON file. 
+                On reimport, publish dates are preserved but WordPress will update the modified date to current time.</p>
+            </div>
+        `;
+        
         $('#import-info').html(html);
         updateProgress(0, data.total_posts, 0);
     }
