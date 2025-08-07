@@ -1023,6 +1023,12 @@ class PostImporter {
         
         global $wpdb;
         
+        // Handle existing featured image cleanup if force_replace is true
+        if ($force_replace && has_post_thumbnail($post_id)) {
+            $old_thumbnail_id = get_post_thumbnail_id($post_id);
+            $this->cleanup_old_featured_image($post_id, $old_thumbnail_id);
+        }
+        
         // If not forcing replacement, check for existing images to reuse
         if (!$force_replace) {
             // Check if image already exists in media library by URL
@@ -1393,6 +1399,45 @@ class PostImporter {
         $wpdb->delete($failed_table, array('session_id' => $session_id));
         
         wp_send_json_success('Import reset successfully');
+    }
+    
+    private function cleanup_old_featured_image($post_id, $old_thumbnail_id) {
+        /**
+         * Clean up old featured image when replacing with new one
+         * This saves space by removing old images that are no longer needed
+         */
+        if (!$old_thumbnail_id) {
+            return;
+        }
+        
+        // Remove the thumbnail association
+        delete_post_thumbnail($post_id);
+        
+        // Check if this image was imported by our plugin
+        $was_imported_by_us = get_post_meta($old_thumbnail_id, '_imported_by_post_importer', true);
+        
+        if ($was_imported_by_us) {
+            // Check if any other posts are using this image as featured image
+            global $wpdb;
+            $other_usage = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->postmeta} 
+                 WHERE meta_key = '_thumbnail_id' 
+                 AND meta_value = %s 
+                 AND post_id != %s",
+                $old_thumbnail_id,
+                $post_id
+            ));
+            
+            // If no other posts are using this image, delete it to save space
+            if ($other_usage == 0) {
+                error_log("Post Importer: Deleting unused featured image {$old_thumbnail_id} to save space");
+                wp_delete_attachment($old_thumbnail_id, true);
+            } else {
+                error_log("Post Importer: Keeping featured image {$old_thumbnail_id} as it's used by {$other_usage} other posts");
+            }
+        } else {
+            error_log("Post Importer: Not deleting featured image {$old_thumbnail_id} as it wasn't imported by our plugin");
+        }
     }
     
     public function register_api_endpoints() {
