@@ -9,6 +9,14 @@ jQuery(document).ready(function($) {
     $('#select-media-json').on('click', function(e) {
         e.preventDefault();
         
+        // Check if wp.media is available
+        if (typeof wp === 'undefined' || typeof wp.media === 'undefined') {
+            alert('WordPress media library is not available. Please refresh the page and try again.');
+            return;
+        }
+        
+        console.log('Opening media library...');
+        
         // Create media frame
         const mediaFrame = wp.media({
             title: 'Select JSON File',
@@ -17,7 +25,7 @@ jQuery(document).ready(function($) {
             },
             multiple: false,
             library: {
-                type: 'application/json'
+                type: ['application/json', 'text/plain'] // Accept both JSON and text files
             }
         });
         
@@ -25,8 +33,13 @@ jQuery(document).ready(function($) {
         mediaFrame.on('select', function() {
             const attachment = mediaFrame.state().get('selection').first().toJSON();
             
-            // Validate file type
-            if (attachment.subtype !== 'json' && attachment.mime !== 'application/json') {
+            console.log('Selected file:', attachment);
+            
+            // Validate file type (be more flexible)
+            if (attachment.subtype !== 'json' && 
+                attachment.mime !== 'application/json' && 
+                attachment.mime !== 'text/plain' &&
+                !attachment.filename.toLowerCase().endsWith('.json')) {
                 alert('Please select a JSON file');
                 return;
             }
@@ -36,8 +49,8 @@ jQuery(document).ready(function($) {
             $('#media-file-id').val(attachment.id);
             
             // Display file info
-            $('#selected-filename').text(attachment.filename);
-            $('#selected-filesize').text(formatFileSize(attachment.filesizeInBytes));
+            $('#selected-filename').text(attachment.filename || attachment.title);
+            $('#selected-filesize').text(formatFileSize(attachment.filesizeInBytes || 0));
             $('#selected-date').text(new Date(attachment.date).toLocaleDateString());
             $('#selected-media-info').show();
             
@@ -45,7 +58,7 @@ jQuery(document).ready(function($) {
             $('#json-file').val('');
             $('#file-path').val('');
             
-            console.log('Selected media file:', attachment);
+            console.log('Media file selected successfully:', attachment.filename);
         });
         
         // Open media frame
@@ -57,6 +70,7 @@ jQuery(document).ready(function($) {
         selectedMediaFile = null;
         $('#media-file-id').val('');
         $('#selected-media-info').hide();
+        console.log('Media selection cleared');
     });
     
     // Helper function to format file size
@@ -74,19 +88,22 @@ jQuery(document).ready(function($) {
         
         const formData = new FormData();
         const fileInput = $('#json-file')[0];
-        const filePath = $('#file-path').val();
+        const filePath = $('#file-path').val().trim();
         const mediaFileId = $('#media-file-id').val();
         
         // Check which method is being used
         if (fileInput.files.length > 0) {
             // Method 1: File upload
             formData.append('json_file', fileInput.files[0]);
+            console.log('Using file upload method');
         } else if (mediaFileId) {
             // Method 2: Media library selection
             formData.append('media_file_id', mediaFileId);
+            console.log('Using media library method, file ID:', mediaFileId);
         } else if (filePath) {
             // Method 3: Server file path
             formData.append('file_path', filePath);
+            console.log('Using server file path method');
         } else {
             alert('Please select a file using one of the three methods');
             return;
@@ -105,6 +122,7 @@ jQuery(document).ready(function($) {
                 $('#upload-form input[type="submit"]').prop('disabled', true).val('Analyzing...');
             },
             success: function(response) {
+                console.log('Upload response:', response);
                 if (response.success) {
                     currentSessionId = response.data.session_id;
                     displayImportInfo(response.data);
@@ -116,68 +134,20 @@ jQuery(document).ready(function($) {
                     $('#reset-import').show();
                 } else {
                     alert('Error: ' + response.data);
+                    console.error('Upload error:', response.data);
                 }
             },
-            error: function() {
+            error: function(xhr, status, error) {
                 alert('Analysis failed. Please try again.');
+                console.error('AJAX error:', error, xhr.responseText);
             },
             complete: function() {
                 $('#upload-form input[type="submit"]').prop('disabled', false).val('Analyze Selected File');
             }
         });
     });
-    
-    // Start import
-    $('#start-import').on('click', function() {
-        if (!currentSessionId) {
-            alert('No import session found');
-            return;
-        }
-        
-        startImport();
-    });
-    
-    // Pause import
-    $('#pause-import').on('click', function() {
-        importPaused = true;
-        $('#pause-import').hide();
-        $('#resume-import').show();
-        logMessage('Import paused');
-    });
-    
-    // Resume import
-    $('#resume-import').on('click', function() {
-        importPaused = false;
-        $('#resume-import').hide();
-        $('#pause-import').show();
-        logMessage('Import resumed');
-        continueImport();
-    });
-    
-    // Reset import
-    $('#reset-import').on('click', function() {
-        if (!currentSessionId) {
-            alert('No import session found');
-            return;
-        }
-        
-        if (confirm('Are you sure you want to reset the import? This will start over from the beginning.')) {
-            resetImport();
-        }
-    });
-    
-    // Reimport posts
-    $('#reimport-posts').on('click', function() {
-        if (!currentSessionId) {
-            alert('No import session found');
-            return;
-        }
-        
-        if (confirm('Are you sure you want to reimport posts? This will replace existing posts and their featured images with the content from the JSON file.')) {
-            startReimport();
-        }
-    });
-    
+
+    // Display import info function
     function displayImportInfo(data) {
         let html = `
             <p><strong>Total Posts:</strong> ${data.total_posts}</p>
@@ -199,257 +169,136 @@ jQuery(document).ready(function($) {
         $('#import-info').html(html);
         updateProgress(0, data.total_posts, 0);
     }
-    
-    function startImport() {
-        importRunning = true;
-        importPaused = false;
-        
-        $('#start-import').hide();
-        $('#pause-import').show();
-        $('#log-section').show();
-        
-        logMessage('Starting import process...');
-        continueImport();
-    }
-    
-    function startReimport() {
-        importRunning = true;
-        importPaused = false;
-        
-        $('#start-import').hide();
-        $('#reimport-posts').hide();
-        $('#pause-import').show();
-        $('#log-section').show();
-        
-        logMessage('Starting reimport process (will replace existing posts and images)...');
-        continueReimport();
-    }
-    
-    function continueImport() {
-        if (!importRunning || importPaused) {
-            return;
-        }
-        
-        $.ajax({
-            url: postImporter.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'import_posts_batch',
-                session_id: currentSessionId,
-                batch_size: postImporter.batch_size,
-                nonce: postImporter.nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    const data = response.data;
-                    
-                    updateProgress(data.total_processed, data.total_posts, data.percentage);
-                    updateStats(data);
-                    
-                    const statusMsg = `Batch completed: ${data.imported} imported, ${data.failed} failed, ${data.skipped} skipped`;
-                    logMessage(statusMsg);
-                    
-                    // Log more details if available
-                    if (data.imported > 0) {
-                        logMessage(`✓ Successfully imported ${data.imported} posts with content and featured images`, 'success');
-                    }
-                    if (data.failed > 0) {
-                        logMessage(`✗ Failed to import ${data.failed} posts - check WordPress error logs for details`, 'error');
-                    }
-                    if (data.skipped > 0) {
-                        logMessage(`⚠ Skipped ${data.skipped} posts (already exist)`, 'info');
-                    }
-                    
-                    if (data.status === 'completed') {
-                        importCompleted();
-                    } else if (!importPaused) {
-                        // Continue with next batch after a short delay
-                        setTimeout(continueImport, 500);
-                    }
-                } else {
-                    logMessage('Error: ' + response.data, 'error');
-                    importRunning = false;
-                    $('#pause-import').hide();
-                    $('#start-import').show();
-                }
-            },
-            error: function() {
-                logMessage('AJAX error occurred. Retrying in 5 seconds...', 'error');
-                setTimeout(continueImport, 5000);
-            }
-        });
-    }
-    
-    function continueReimport() {
-        if (!importRunning || importPaused) {
-            return;
-        }
-        
-        $.ajax({
-            url: postImporter.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'reimport_posts_batch',
-                session_id: currentSessionId,
-                batch_size: postImporter.batch_size,
-                nonce: postImporter.nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    const data = response.data;
-                    
-                    updateProgress(data.total_processed, data.total_posts, data.percentage);
-                    updateStats(data);
-                    
-                    const statusMsg = `Reimport batch completed: ${data.imported} reimported, ${data.failed} failed, ${data.skipped} skipped`;
-                    logMessage(statusMsg);
-                    
-                    // Log more details if available
-                    if (data.imported > 0) {
-                        logMessage(`✓ Successfully reimported ${data.imported} posts with updated content and replaced featured images`, 'success');
-                    }
-                    if (data.failed > 0) {
-                        logMessage(`✗ Failed to reimport ${data.failed} posts - check WordPress error logs for details`, 'error');
-                    }
-                    if (data.skipped > 0) {
-                        logMessage(`⚠ Skipped ${data.skipped} posts (no existing post found, imported as new)`, 'info');
-                    }
-                    
-                    if (data.status === 'completed') {
-                        reimportCompleted();
-                    } else if (!importPaused) {
-                        // Continue with next batch after a short delay
-                        setTimeout(continueReimport, 500);
-                    }
-                } else {
-                    logMessage('Error: ' + response.data, 'error');
-                    importRunning = false;
-                    $('#pause-import').hide();
-                    $('#start-import').show();
-                    $('#reimport-posts').show();
-                }
-            },
-            error: function() {
-                logMessage('AJAX error occurred. Retrying in 5 seconds...', 'error');
-                setTimeout(continueReimport, 5000);
-            }
-        });
-    }
-    
+
+    // Progress update function
     function updateProgress(processed, total, percentage) {
         $('#progress-fill').css('width', percentage + '%');
-        $('#progress-text').text(percentage + '% (' + processed + '/' + total + ')');
+        $('#progress-text').text(Math.round(percentage) + '%');
+        $('#import-stats').html(`<p>Processed: ${processed} / ${total}</p>`);
     }
-    
-    function updateStats(data) {
-        const html = `
-            <p><strong>Imported:</strong> ${data.total_processed - data.failed}</p>
-            <p><strong>Failed:</strong> ${data.failed || 0}</p>
-            <p><strong>Remaining:</strong> ${data.total_posts - data.total_processed}</p>
-        `;
-        $('#import-stats').html(html);
-    }
-    
-    function importCompleted() {
-        importRunning = false;
-        $('#pause-import').hide();
-        $('#resume-import').hide();
-        $('#start-import').show();
+
+    // Start import
+    $('#start-import').on('click', function() {
+        if (!currentSessionId) {
+            alert('No import session found');
+            return;
+        }
         
-        logMessage('Import completed successfully!', 'success');
+        startImport();
+    });
+    
+    // Start import function
+    function startImport() {
+        importRunning = true;
+        isReimporting = false;
+        $('#start-import').hide();
+        $('#pause-import').show();
+        $('#import-log').html('');
+        $('#log-section').show();
         
-        // Show completion summary
-        getImportStatus();
+        processNextBatch();
     }
     
-    function reimportCompleted() {
-        importRunning = false;
-        $('#pause-import').hide();
-        $('#resume-import').hide();
-        $('#start-import').show();
-        $('#reimport-posts').show();
+    // Process batch function
+    function processNextBatch() {
+        if (!importRunning || importPaused) {
+            return;
+        }
         
-        logMessage('Reimport completed successfully! All posts and featured images have been updated.', 'success');
-        
-        // Show completion summary
-        getImportStatus();
-    }
-    
-    function resetImport() {
-        $.ajax({
-            url: postImporter.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'reset_import',
-                session_id: currentSessionId,
-                nonce: postImporter.nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    importRunning = false;
-                    importPaused = false;
-                    
-                    $('#pause-import').hide();
-                    $('#resume-import').hide();
-                    $('#start-import').show();
-                    
-                    updateProgress(0, 0, 0);
-                    $('#import-stats').html('');
-                    $('#import-log').html('');
-                    
-                    logMessage('Import reset successfully');
-                } else {
-                    alert('Reset failed: ' + response.data);
-                }
-            },
-            error: function() {
-                alert('Reset failed. Please try again.');
-            }
-        });
-    }
-    
-    function getImportStatus() {
-        if (!currentSessionId) return;
+        const action = isReimporting ? 'reimport_posts_batch' : 'import_posts_batch';
         
         $.ajax({
             url: postImporter.ajax_url,
             type: 'POST',
             data: {
-                action: 'get_import_status',
+                action: action,
                 session_id: currentSessionId,
+                batch_size: postImporter.batch_size,
                 nonce: postImporter.nonce
             },
             success: function(response) {
                 if (response.success) {
                     const data = response.data;
-                    updateProgress(data.processed_posts, data.total_posts, data.percentage);
-                    updateStats({
-                        total_processed: data.processed_posts,
-                        failed: data.failed_posts,
-                        total_posts: data.total_posts
-                    });
+                    updateProgress(data.total_processed, data.total_posts, data.percentage);
+                    
+                    // Add to log
+                    const logEntry = `<p>Batch completed: ${data.imported} imported, ${data.failed} failed, ${data.skipped} skipped</p>`;
+                    $('#import-log').append(logEntry);
+                    
+                    if (data.status === 'completed') {
+                        importRunning = false;
+                        $('#pause-import').hide();
+                        $('#resume-import').hide();
+                        alert('Import completed!');
+                    } else {
+                        // Continue with next batch
+                        setTimeout(processNextBatch, 1000);
+                    }
+                } else {
+                    alert('Batch failed: ' + response.data);
+                    importRunning = false;
                 }
+            },
+            error: function() {
+                alert('Network error during import');
+                importRunning = false;
             }
         });
     }
-    
-    function logMessage(message, type = 'info') {
-        const timestamp = new Date().toLocaleTimeString();
-        const cssClass = type === 'error' ? 'error' : (type === 'success' ? 'success' : 'info');
-        
-        const logEntry = `<div class="log-entry ${cssClass}">
-            <span class="timestamp">[${timestamp}]</span>
-            <span class="message">${message}</span>
-        </div>`;
-        
-        $('#import-log').append(logEntry);
-        $('#import-log').scrollTop($('#import-log')[0].scrollHeight);
-    }
-    
-    // Auto-refresh status every 30 seconds if import is running
-    setInterval(function() {
-        if (importRunning && !importPaused) {
-            getImportStatus();
+
+    // Pause import
+    $('#pause-import').on('click', function() {
+        importPaused = true;
+        $('#pause-import').hide();
+        $('#resume-import').show();
+    });
+
+    // Resume import
+    $('#resume-import').on('click', function() {
+        importPaused = false;
+        $('#resume-import').hide();
+        $('#pause-import').show();
+        processNextBatch();
+    });
+
+    // Reimport posts
+    $('#reimport-posts').on('click', function() {
+        if (!currentSessionId) {
+            alert('No import session found');
+            return;
         }
-    }, 30000);
+        
+        if (confirm('This will update existing posts and replace their content and images. Continue?')) {
+            isReimporting = true;
+            startImport();
+        }
+    });
+
+    // Reset import
+    $('#reset-import').on('click', function() {
+        if (!currentSessionId) {
+            alert('No import session found');
+            return;
+        }
+        
+        if (confirm('This will reset the import progress. Continue?')) {
+            $.ajax({
+                url: postImporter.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'reset_import',
+                    session_id: currentSessionId,
+                    nonce: postImporter.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        alert('Import reset successfully');
+                        location.reload();
+                    } else {
+                        alert('Reset failed: ' + response.data);
+                    }
+                }
+            });
+        }
+    });
 });

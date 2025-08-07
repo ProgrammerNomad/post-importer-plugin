@@ -20,6 +20,9 @@ define('POST_IMPORTER_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 class PostImporter {
     
+    // Track last imported post ID
+    private $last_imported_post_id = null;
+    
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
@@ -28,6 +31,7 @@ class PostImporter {
         add_action('wp_ajax_reimport_posts_batch', array($this, 'reimport_posts_batch'));
         add_action('wp_ajax_get_import_status', array($this, 'get_import_status'));
         add_action('wp_ajax_reset_import', array($this, 'reset_import'));
+        add_action('rest_api_init', array($this, 'register_api_endpoints'));
         
         // Create database table on activation
         register_activation_hook(__FILE__, array($this, 'create_import_table'));
@@ -675,6 +679,9 @@ class PostImporter {
                 error_log("Post Importer: Updated post {$post_id} content with processed images");
             }
             
+            // After successful wp_insert_post
+            $this->last_imported_post_id = $post_id;
+            
             return 'imported';
             
         } catch (Exception $e) {
@@ -955,12 +962,17 @@ class PostImporter {
             return $category->term_id;
         }
         
-        $result = wp_insert_category(array(
-            'cat_name' => $name,
-            'category_nicename' => $slug
+        // Use wp_insert_term instead of deprecated wp_insert_category
+        $result = wp_insert_term($name, 'category', array(
+            'slug' => $slug
         ));
         
-        return is_wp_error($result) ? false : $result;
+        if (is_wp_error($result)) {
+            error_log("Post Importer: Failed to create category '{$name}': " . $result->get_error_message());
+            return false;
+        }
+        
+        return $result['term_id'];
     }
     
     private function handle_tags($post_id, $tags) {
@@ -1383,169 +1395,186 @@ class PostImporter {
         wp_send_json_success('Import reset successfully');
     }
     
-    /**
-     * Cleanup orphaned images that were imported but are no longer used
-     * This is a utility function that can be called manually if needed
-     */
-    public function cleanup_orphaned_images() {
-        global $wpdb;
+    public function register_api_endpoints() {
+        register_rest_route('post-importer/v1', '/import-post', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'api_import_post'),
+            'permission_callback' => array($this, 'api_permission_check'),
+            'args' => array(
+                'post_data' => array(
+                    'required' => true,
+                    'type' => 'object'
+                ),
+                'api_key' => array(
+                    'required' => true,
+                    'type' => 'string'
+                ),
+                'force_replace' => array(
+                    'required' => false,
+                    'type' => 'boolean',
+                    'default' => false
+                )
+            )
+        ));
         
-        // Find all images imported by our plugin
-        $imported_images = $wpdb->get_results("
-            SELECT p.ID, p.post_title 
-            FROM {$wpdb->posts} p 
-            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id 
-            WHERE p.post_type = 'attachment' 
-            AND pm.meta_key = '_imported_by_post_importer' 
-            AND pm.meta_value = '1'
-        ");
-        
-        $deleted_count = 0;
-        
-        foreach ($imported_images as $image) {
-            // Check if this image is being used as a featured image
-            $used_as_featured = $wpdb->get_var($wpdb->prepare("
-                SELECT COUNT(*) 
-                FROM {$wpdb->postmeta} 
-                WHERE meta_key = '_thumbnail_id' 
-                AND meta_value = %d
-            ", $image->ID));
-            
-            // If not being used, delete it
-            if ($used_as_featured == 0) {
-                wp_delete_attachment($image->ID, true);
-                $deleted_count++;
-            }
-        }
-        
-        return $deleted_count;
+        register_rest_route('post-importer/v1', '/status', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'api_get_status'),
+            'permission_callback' => array($this, 'api_permission_check')
+        ));
     }
-
+    
     private function process_content_images($content, $post_id, $post_title = '') {
+        // Skip if content is empty
         if (empty($content)) {
             return $content;
         }
         
-        error_log("Post Importer: Starting content image processing for post {$post_id}");
+        error_log("Post Importer: Processing content images for post {$post_id}");
         
-        // Find all image URLs in the content (various formats)
-        $patterns = [
-            // Standard img tags
-            '/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i',
-            // WordPress figure blocks with images
-            '/<figure[^>]*class="[^"]*wp-block-image[^"]*"[^>]*>.*?<img[^>]+src=["\']([^"\']+)["\'][^>]*>.*?<\/figure>/is',
-        ];
+        // Find all img tags in the content
+        preg_match_all('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches, PREG_SET_ORDER);
         
-        $updated_content = $content;
-        $processed_urls = []; // Avoid processing same URL multiple times
-        $images_processed = 0;
+        if (empty($matches)) {
+            error_log("Post Importer: No images found in content for post {$post_id}");
+            return $content;
+        }
         
-        foreach ($patterns as $pattern) {
-            preg_match_all($pattern, $content, $matches, PREG_SET_ORDER);
+        error_log("Post Importer: Found " . count($matches) . " images in content for post {$post_id}");
+        
+        $processed_content = $content;
+        
+        foreach ($matches as $match) {
+            $full_img_tag = $match[0];
+            $src_url = $match[1];
             
-            foreach ($matches as $match) {
-                $full_img_tag = $match[0];
-                $image_url = $match[1];
+            // Skip if it's already a local WordPress image
+            if (strpos($src_url, wp_upload_dir()['baseurl']) !== false) {
+                error_log("Post Importer: Skipping local image: {$src_url}");
+                continue;
+            }
+            
+            // Skip if it's a data URL
+            if (strpos($src_url, 'data:') === 0) {
+                error_log("Post Importer: Skipping data URL image");
+                continue;
+            }
+            
+            // Download and process the image
+            error_log("Post Importer: Processing content image: {$src_url}");
+            $new_image_id = $this->download_image($src_url, $post_title . ' - Content Image', $post_id);
+            
+            if ($new_image_id && !is_wp_error($new_image_id)) {
+                // Get the new local URL
+                $new_image_url = wp_get_attachment_url($new_image_id);
                 
-                // Skip if already processed or is local WordPress URL
-                if (in_array($image_url, $processed_urls) || 
-                    strpos($image_url, site_url()) !== false ||
-                    strpos($image_url, home_url()) !== false) {
-                    continue;
-                }
-                
-                // Skip data URLs, relative URLs, or invalid URLs
-                if (strpos($image_url, 'data:') === 0 || 
-                    strpos($image_url, '//') === 0 || 
-                    strpos($image_url, '/') === 0 ||
-                    !filter_var($image_url, FILTER_VALIDATE_URL)) {
-                    continue;
-                }
-                
-                error_log("Post Importer: Processing content image: {$image_url}");
-                
-                // Extract alt text and other attributes
-                $alt_text = '';
-                if (preg_match('/alt=["\']([^"\']*)["\']/', $full_img_tag, $alt_match)) {
-                    $alt_text = $alt_match[1];
-                }
-                
-                // Extract class attributes
-                $css_classes = '';
-                if (preg_match('/class=["\']([^"\']*)["\']/', $full_img_tag, $class_match)) {
-                    $css_classes = $class_match[1];
-                }
-                
-                // Extract width and height
-                $width = '';
-                $height = '';
-                if (preg_match('/width=["\']([^"\']*)["\']/', $full_img_tag, $width_match)) {
-                    $width = $width_match[1];
-                }
-                if (preg_match('/height=["\']([^"\']*)["\']/', $full_img_tag, $height_match)) {
-                    $height = $height_match[1];
-                }
-                
-                // Download and import the image
-                $description = $alt_text ?: ($post_title ? "Content image from: " . $post_title : "Content Image");
-                $image_id = $this->download_image($image_url, $description, $post_id);
-                
-                if ($image_id && !is_wp_error($image_id) && is_numeric($image_id)) {
-                    // Get the new local URL and attachment details
-                    $new_image_url = wp_get_attachment_url($image_id);
-                    $attachment = get_post($image_id);
+                if ($new_image_url) {
+                    // Replace the old URL with the new local URL
+                    $processed_content = str_replace($src_url, $new_image_url, $processed_content);
+                    error_log("Post Importer: Replaced content image URL for post {$post_id}: {$src_url} -> {$new_image_url}");
                     
-                    if ($new_image_url && $attachment) {
-                        // Update alt text if we have it
-                        if ($alt_text) {
-                            update_post_meta($image_id, '_wp_attachment_image_alt', $alt_text);
-                        }
-                        
-                        // Create new img tag with WordPress attributes
-                        $new_img_attributes = [
-                            'src="' . esc_url($new_image_url) . '"',
-                            'alt="' . esc_attr($alt_text) . '"',
-                            'class="wp-image-' . $image_id . ($css_classes ? ' ' . esc_attr($css_classes) : '') . '"'
-                        ];
-                        
-                        // Preserve width and height if they exist
-                        if ($width) {
-                            $new_img_attributes[] = 'width="' . esc_attr($width) . '"';
-                        }
-                        if ($height) {
-                            $new_img_attributes[] = 'height="' . esc_attr($height) . '"';
-                        }
-                        
-                        // Create the new img tag
-                        $new_img_tag = '<img ' . implode(' ', $new_img_attributes) . ' />';
-                        
-                        // Replace the old img tag with the new one
-                        $updated_content = str_replace($full_img_tag, $new_img_tag, $updated_content);
-                        
-                        error_log("Post Importer: Replaced content image - Old: {$image_url} -> New: {$new_image_url} (ID: {$image_id})");
-                        
-                        $processed_urls[] = $image_url;
-                        $images_processed++;
-                        
-                        // Mark this as a content image for tracking
-                        update_post_meta($image_id, '_is_content_image', true);
-                        update_post_meta($image_id, '_content_image_post_id', $post_id);
-                    } else {
-                        error_log("Post Importer: Failed to get attachment URL for image ID: {$image_id}");
-                    }
+                    // Mark this image as imported by our plugin
+                    update_post_meta($new_image_id, '_imported_by_post_importer', '1');
+                    update_post_meta($new_image_id, '_imported_for_post', $post_id);
                 } else {
-                    error_log("Post Importer: Failed to download content image: {$image_url}");
+                    error_log("Post Importer: Failed to get URL for downloaded image {$new_image_id}");
                 }
+            } else {
+                error_log("Post Importer: Failed to download content image: {$src_url}");
             }
         }
         
-        if ($images_processed > 0) {
-            error_log("Post Importer: Processed {$images_processed} content images for post {$post_id}");
-            // Store count of content images for reference
-            update_post_meta($post_id, '_content_images_count', $images_processed);
-        }
+        return $processed_content;
+    }
+
+    public function api_permission_check($request) {
+        // Simple API key authentication
+        $api_key = $request->get_param('api_key') ?: $request->get_header('X-API-Key');
+        $stored_key = get_option('post_importer_api_key', 'climaterural-secret-key-2025');
         
-        return $updated_content;
+        return $api_key === $stored_key;
+    }
+
+    public function api_import_post($request) {
+        $post_data = $request->get_param('post_data');
+        $force_replace = $request->get_param('force_replace') ?: false;
+        
+        try {
+            // Add error logging and validation
+            error_log("Post Importer API: Starting import for post: " . ($post_data['title'] ?? 'Unknown'));
+            
+            // Validate required fields
+            if (empty($post_data['title']) || empty($post_data['slug'])) {
+                throw new Exception('Missing required fields: title or slug');
+            }
+            
+            // Increase memory and execution limits for API requests
+            if (function_exists('ini_set')) {
+                ini_set('memory_limit', '512M');
+                ini_set('max_execution_time', 120);
+            }
+            
+            // Use reimport logic if force_replace is true
+            if ($force_replace) {
+                $result = $this->reimport_single_post($post_data, 'api_import_' . time(), true);
+            } else {
+                $result = $this->import_single_post($post_data, 'api_import_' . time());
+            }
+            
+            // Track the imported post ID
+            $response_data = array(
+                'success' => true,
+                'result' => $result,
+                'message' => "Post '{$post_data['title']}' {$result}",
+                'force_replace' => $force_replace
+            );
+            
+            if ($result === 'imported' && $this->last_imported_post_id) {
+                $response_data['post_id'] = $this->last_imported_post_id;
+            }
+            
+            error_log("Post Importer API: Import result for '{$post_data['title']}': {$result}");
+            
+            return new WP_REST_Response($response_data, 200);
+            
+        } catch (Exception $e) {
+            error_log("Post Importer API: Error importing post '{$post_data['title']}': " . $e->getMessage());
+            error_log("Post Importer API: Stack trace: " . $e->getTraceAsString());
+            
+            return new WP_REST_Response(array(
+                'success' => false,
+                'error' => $e->getMessage(),
+                'post_data' => $post_data['title'] ?? 'Unknown',
+                'trace' => WP_DEBUG ? $e->getTraceAsString() : null
+            ), 500);
+        } catch (Error $e) {
+            error_log("Post Importer API: Fatal error importing post '{$post_data['title']}': " . $e->getMessage());
+            
+            return new WP_REST_Response(array(
+                'success' => false,
+                'error' => 'Fatal error: ' . $e->getMessage(),
+                'post_data' => $post_data['title'] ?? 'Unknown'
+            ), 500);
+        }
+    }
+
+    public function api_get_status($request) {
+        global $wpdb;
+        
+        $imported_count = $wpdb->get_var("
+            SELECT COUNT(*) FROM {$wpdb->posts} p
+            JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+            WHERE p.post_type = 'post' 
+            AND pm.meta_key = '_import_session_id' 
+            AND pm.meta_value LIKE 'api_import_%'
+        ");
+        
+        return new WP_REST_Response(array(
+            'success' => true,
+            'imported_posts' => (int)$imported_count,
+            'wordpress_version' => get_bloginfo('version'),
+            'plugin_version' => POST_IMPORTER_VERSION
+        ), 200);
     }
 }
 
