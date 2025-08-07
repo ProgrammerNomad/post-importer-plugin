@@ -3,7 +3,71 @@ jQuery(document).ready(function($) {
     let importRunning = false;
     let importPaused = false;
     let isReimporting = false;
+    let selectedMediaFile = null; // Add this new variable
+
+    // Media Library Selection
+    $('#select-media-json').on('click', function(e) {
+        e.preventDefault();
+        
+        // Create media frame
+        const mediaFrame = wp.media({
+            title: 'Select JSON File',
+            button: {
+                text: 'Use This File'
+            },
+            multiple: false,
+            library: {
+                type: 'application/json'
+            }
+        });
+        
+        // When file is selected
+        mediaFrame.on('select', function() {
+            const attachment = mediaFrame.state().get('selection').first().toJSON();
+            
+            // Validate file type
+            if (attachment.subtype !== 'json' && attachment.mime !== 'application/json') {
+                alert('Please select a JSON file');
+                return;
+            }
+            
+            // Store selected file info
+            selectedMediaFile = attachment;
+            $('#media-file-id').val(attachment.id);
+            
+            // Display file info
+            $('#selected-filename').text(attachment.filename);
+            $('#selected-filesize').text(formatFileSize(attachment.filesizeInBytes));
+            $('#selected-date').text(new Date(attachment.date).toLocaleDateString());
+            $('#selected-media-info').show();
+            
+            // Clear other input methods
+            $('#json-file').val('');
+            $('#file-path').val('');
+            
+            console.log('Selected media file:', attachment);
+        });
+        
+        // Open media frame
+        mediaFrame.open();
+    });
     
+    // Clear media selection
+    $('#clear-media-selection').on('click', function() {
+        selectedMediaFile = null;
+        $('#media-file-id').val('');
+        $('#selected-media-info').hide();
+    });
+    
+    // Helper function to format file size
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
     // File upload form submission
     $('#upload-form').on('submit', function(e) {
         e.preventDefault();
@@ -11,13 +75,20 @@ jQuery(document).ready(function($) {
         const formData = new FormData();
         const fileInput = $('#json-file')[0];
         const filePath = $('#file-path').val();
+        const mediaFileId = $('#media-file-id').val();
         
+        // Check which method is being used
         if (fileInput.files.length > 0) {
+            // Method 1: File upload
             formData.append('json_file', fileInput.files[0]);
+        } else if (mediaFileId) {
+            // Method 2: Media library selection
+            formData.append('media_file_id', mediaFileId);
         } else if (filePath) {
+            // Method 3: Server file path
             formData.append('file_path', filePath);
         } else {
-            alert('Please select a file or enter a file path');
+            alert('Please select a file using one of the three methods');
             return;
         }
         
@@ -31,7 +102,7 @@ jQuery(document).ready(function($) {
             processData: false,
             contentType: false,
             beforeSend: function() {
-                $('#upload-form input[type="submit"]').prop('disabled', true).val('Uploading...');
+                $('#upload-form input[type="submit"]').prop('disabled', true).val('Analyzing...');
             },
             success: function(response) {
                 if (response.success) {
@@ -48,10 +119,10 @@ jQuery(document).ready(function($) {
                 }
             },
             error: function() {
-                alert('Upload failed. Please try again.');
+                alert('Analysis failed. Please try again.');
             },
             complete: function() {
-                $('#upload-form input[type="submit"]').prop('disabled', false).val('Upload & Analyze File');
+                $('#upload-form input[type="submit"]').prop('disabled', false).val('Analyze Selected File');
             }
         });
     });

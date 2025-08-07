@@ -48,7 +48,10 @@ class PostImporter {
             return;
         }
         
-        wp_enqueue_script('post-importer-js', POST_IMPORTER_PLUGIN_URL . 'assets/post-importer.js', array('jquery'), POST_IMPORTER_VERSION, true);
+        // Enqueue WordPress media scripts for media library selection
+        wp_enqueue_media();
+        
+        wp_enqueue_script('post-importer-js', POST_IMPORTER_PLUGIN_URL . 'assets/post-importer.js', array('jquery', 'media-upload', 'media-views'), POST_IMPORTER_VERSION, true);
         wp_enqueue_style('post-importer-css', POST_IMPORTER_PLUGIN_URL . 'assets/post-importer.css', array(), POST_IMPORTER_VERSION);
         
         wp_localize_script('post-importer-js', 'postImporter', array(
@@ -105,27 +108,41 @@ class PostImporter {
             <div id="import-container">
                 <!-- File Upload Section -->
                 <div id="upload-section" class="postbox">
-                    <h2 class="hndle">Upload JSON File</h2>
+                    <h2 class="hndle">Select JSON File</h2>
                     <div class="inside">
                         <form id="upload-form" enctype="multipart/form-data">
                             <table class="form-table">
                                 <tr>
-                                    <th scope="row">Select JSON File</th>
+                                    <th scope="row">Method 1: Upload New File</th>
                                     <td>
-                                        <input type="file" id="json-file" name="json_file" accept=".json" required>
-                                        <p class="description">Select your posts.json file to import</p>
+                                        <input type="file" id="json-file" name="json_file" accept=".json">
+                                        <p class="description">Select your posts.json file to upload and import</p>
                                     </td>
                                 </tr>
                                 <tr>
-                                    <th scope="row">OR File Path</th>
+                                    <th scope="row">Method 2: Select from Media Library</th>
+                                    <td>
+                                        <input type="button" id="select-media-json" class="button" value="Choose from Media Library">
+                                        <input type="hidden" id="media-file-id" name="media_file_id" value="">
+                                        <div id="selected-media-info" style="margin-top: 10px; display: none;">
+                                            <p><strong>Selected File:</strong> <span id="selected-filename"></span></p>
+                                            <p><strong>File Size:</strong> <span id="selected-filesize"></span></p>
+                                            <p><strong>Upload Date:</strong> <span id="selected-date"></span></p>
+                                            <button type="button" id="clear-media-selection" class="button">Clear Selection</button>
+                                        </div>
+                                        <p class="description">Select a JSON file that's already uploaded to your Media Library</p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Method 3: Server File Path</th>
                                     <td>
                                         <input type="text" id="file-path" name="file_path" class="regular-text" placeholder="Enter full path to JSON file">
-                                        <p class="description">Enter the full server path to your JSON file (alternative to upload)</p>
+                                        <p class="description">Enter the full server path to your JSON file</p>
                                     </td>
                                 </tr>
                             </table>
                             <p class="submit">
-                                <input type="submit" class="button-primary" value="Upload & Analyze File">
+                                <input type="submit" class="button-primary" value="Analyze Selected File">
                             </p>
                         </form>
                     </div>
@@ -175,7 +192,7 @@ class PostImporter {
         $file_path = '';
         $session_id = uniqid('import_');
         
-        // Handle file upload
+        // Handle file upload (Method 1)
         if (!empty($_FILES['json_file']['tmp_name'])) {
             $upload_dir = wp_upload_dir();
             $target_dir = $upload_dir['basedir'] . '/post-importer/';
@@ -192,7 +209,35 @@ class PostImporter {
                 return;
             }
         }
-        // Handle file path input
+        // Handle media library selection (Method 2) - NEW
+        elseif (!empty($_POST['media_file_id'])) {
+            $media_file_id = intval($_POST['media_file_id']);
+            
+            // Get attachment details
+            $attachment = get_post($media_file_id);
+            if (!$attachment || $attachment->post_type !== 'attachment') {
+                wp_send_json_error('Invalid media file selected');
+                return;
+            }
+            
+            // Check if it's a JSON file
+            $mime_type = get_post_mime_type($media_file_id);
+            if ($mime_type !== 'application/json') {
+                wp_send_json_error('Selected file is not a JSON file');
+                return;
+            }
+            
+            // Get the file path
+            $file_path = get_attached_file($media_file_id);
+            
+            if (!$file_path || !file_exists($file_path)) {
+                wp_send_json_error('Media file not found on server');
+                return;
+            }
+            
+            error_log("Post Importer: Using media library file: {$file_path}");
+        }
+        // Handle server file path (Method 3)
         elseif (!empty($_POST['file_path'])) {
             $file_path = sanitize_text_field($_POST['file_path']);
             
@@ -201,8 +246,26 @@ class PostImporter {
                 return;
             }
         } else {
-            wp_send_json_error('No file uploaded or path specified');
+            wp_send_json_error('No file uploaded, selected, or path specified');
             return;
+        }
+        
+        // Validate file size for large files
+        $file_size = filesize($file_path);
+        if ($file_size === false) {
+            wp_send_json_error('Unable to determine file size');
+            return;
+        }
+        
+        // Check if file is very large (over 100MB)
+        if ($file_size > (100 * 1024 * 1024)) {
+            error_log("Post Importer: Processing large file ({$file_size} bytes): {$file_path}");
+            
+            // Increase memory and time limits for large files
+            if (function_exists('ini_set')) {
+                ini_set('memory_limit', '1024M');
+                ini_set('max_execution_time', 300);
+            }
         }
         
         // Analyze JSON file
@@ -230,28 +293,54 @@ class PostImporter {
         wp_send_json_success(array(
             'session_id' => $session_id,
             'total_posts' => count($posts_data),
-            'file_path' => $file_path
+            'file_path' => basename($file_path),
+            'file_size' => size_format($file_size)
         ));
     }
     
     private function analyze_json_file($file_path) {
-        $json_content = file_get_contents($file_path);
+        // Check file size first
+        $file_size = filesize($file_path);
         
-        if ($json_content === false) {
+        if ($file_size === false) {
+            error_log("Post Importer: Unable to get file size for: {$file_path}");
             return false;
         }
         
+        error_log("Post Importer: Analyzing JSON file: {$file_path} ({$file_size} bytes)");
+        
+        // For very large files, increase memory limit
+        if ($file_size > (50 * 1024 * 1024)) { // 50MB+
+            if (function_exists('ini_set')) {
+                ini_set('memory_limit', '1024M');
+                ini_set('max_execution_time', 300);
+            }
+            error_log("Post Importer: Increased memory limit for large file processing");
+        }
+        
+        // Read file contents
+        $json_content = file_get_contents($file_path);
+        
+        if ($json_content === false) {
+            error_log("Post Importer: Failed to read file: {$file_path}");
+            return false;
+        }
+        
+        // Decode JSON
         $posts_data = json_decode($json_content, true);
         
         if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("Post Importer: JSON decode error: " . json_last_error_msg());
             return false;
         }
         
         // Validate structure
         if (!is_array($posts_data) || empty($posts_data)) {
+            error_log("Post Importer: Invalid JSON structure - not an array or empty");
             return false;
         }
         
+        error_log("Post Importer: Successfully analyzed JSON file with " . count($posts_data) . " posts");
         return $posts_data;
     }
     
@@ -439,24 +528,37 @@ class PostImporter {
                 return 'skipped'; // Post with this original ID already exists
             }
             
-            // Prepare post data
+            // Prepare post data with proper date handling
+            $original_publish_date = $this->parse_date($post_data['formatted_first_published_at_datetime']);
+            $original_modified_date = $this->parse_date($post_data['formatted_last_published_at_datetime']);
+            
             $wp_post_data = array(
                 'post_title' => sanitize_text_field($post_data['title']),
-                'post_content' => wp_kses_post($post_data['content']), // Allow HTML but sanitize
+                'post_content' => wp_kses_post($post_data['content']),
                 'post_excerpt' => sanitize_text_field(!empty($post_data['short_description']) ? $post_data['short_description'] : $post_data['summary']),
                 'post_name' => sanitize_title($post_data['slug']),
                 'post_status' => 'publish',
                 'post_type' => 'post',
-                'post_date' => $this->parse_date($post_data['formatted_first_published_at_datetime']),
-                'post_modified' => $this->parse_date($post_data['formatted_last_published_at_datetime'])
+                'post_date' => $original_publish_date,        // Keep original publish date
+                'post_date_gmt' => get_gmt_from_date($original_publish_date),
+                'post_modified' => $original_modified_date,   // Keep original modified date initially
+                'post_modified_gmt' => get_gmt_from_date($original_modified_date)
             );
             
             // Insert post
             $post_id = wp_insert_post($wp_post_data);
             
             if (is_wp_error($post_id)) {
-                throw new Exception($post_id->get_error_message());
+                error_log('Post Importer: Failed to insert post: ' . $post_id->get_error_message());
+                return 'failed';
             }
+            
+            // Store original dates for reference
+            update_post_meta($post_id, '_original_publish_date', $post_data['formatted_first_published_at_datetime']);
+            update_post_meta($post_id, '_original_modified_date', $post_data['formatted_last_published_at_datetime']);
+            update_post_meta($post_id, '_import_date', current_time('mysql'));
+            
+            error_log("Post Importer: Created post {$post_id} with original publish date: {$original_publish_date}");
             
             // Handle categories
             if (!empty($post_data['categories'])) {
@@ -620,7 +722,10 @@ class PostImporter {
             
             $post_id = $existing_post->ID;
             
-            // Update the existing post with new data
+            // Update the existing post with new data while preserving publish date
+            $original_publish_date = get_post_field('post_date', $post_id); // Keep existing publish date
+            $new_content_modified_date = $this->parse_date($post_data['formatted_last_published_at_datetime']);
+
             $wp_post_data = array(
                 'ID' => $post_id,
                 'post_title' => sanitize_text_field($post_data['title']),
@@ -628,16 +733,25 @@ class PostImporter {
                 'post_excerpt' => sanitize_text_field(!empty($post_data['short_description']) ? $post_data['short_description'] : $post_data['summary']),
                 'post_name' => sanitize_title($post_data['slug']),
                 'post_status' => 'publish',
-                'post_date' => $this->parse_date($post_data['formatted_first_published_at_datetime']),
-                'post_modified' => $this->parse_date($post_data['formatted_last_published_at_datetime'])
+                'post_date' => $original_publish_date,        // PRESERVE original publish date
+                'post_date_gmt' => get_gmt_from_date($original_publish_date),
+                // Don't set post_modified - let WordPress set it to current time for the update
             );
             
-            // Update post
+            // Update post (WordPress will automatically set post_modified to current time)
             $result = wp_update_post($wp_post_data);
-            
+
             if (is_wp_error($result)) {
-                throw new Exception($result->get_error_message());
+                error_log('Post Importer: Failed to update post: ' . $result->get_error_message());
+                return 'failed';
             }
+
+            // Store metadata about the update
+            update_post_meta($post_id, '_last_content_modified_date', $new_content_modified_date);
+            update_post_meta($post_id, '_last_reimport_date', current_time('mysql'));
+            update_post_meta($post_id, '_reimport_count', intval(get_post_meta($post_id, '_reimport_count', true)) + 1);
+
+            error_log("Post Importer: Updated post {$post_id} - kept original publish date: {$original_publish_date}, WordPress updated modified date automatically");
             
             // Remove existing featured image if replacing
             if ($force_replace && has_post_thumbnail($post_id)) {
@@ -792,11 +906,31 @@ class PostImporter {
     }
     
     private function parse_date($date_string) {
-        $date = DateTime::createFromFormat('Y-m-d\TH:i:sP', $date_string);
-        if ($date === false) {
+        if (empty($date_string)) {
             return current_time('mysql');
         }
-        return $date->format('Y-m-d H:i:s');
+        
+        // Try multiple date formats
+        $formats = [
+            'Y-m-d\TH:i:s.uP',     // 2025-07-24T15:23:35.152+05:30
+            'Y-m-d\TH:i:sP',       // 2025-07-24T15:23:35+05:30  
+            'Y-m-d\TH:i:s.u',      // 2025-07-24T15:23:35.152
+            'Y-m-d\TH:i:s',        // 2025-07-24T15:23:35
+            'Y-m-d H:i:s',         // 2025-07-24 15:23:35
+            'Y-m-d'                // 2025-07-24
+        ];
+        
+        foreach ($formats as $format) {
+            $date = DateTime::createFromFormat($format, $date_string);
+            if ($date !== false) {
+                // Convert to WordPress timezone
+                $date->setTimezone(new DateTimeZone(wp_timezone_string()));
+                return $date->format('Y-m-d H:i:s');
+            }
+        }
+        
+        error_log("Post Importer: Could not parse date: {$date_string}");
+        return current_time('mysql');
     }
     
     private function handle_categories($post_id, $categories) {
@@ -1428,3 +1562,26 @@ if (defined('WP_DEBUG') && WP_DEBUG) {
 
 // Initialize the plugin
 new PostImporter();
+
+// Add this function to display import information with dates
+function displayImportInfo(data) {
+    let html = `
+        <p><strong>Total Posts:</strong> ${data.total_posts}</p>
+        <p><strong>File:</strong> ${data.file_path}</p>
+        <p><strong>Session ID:</strong> ${data.session_id}</p>
+    `;
+    
+    if (data.file_size) {
+        html += `<p><strong>File Size:</strong> ${data.file_size}</p>`;
+    }
+    
+    html += `
+        <div class="notice notice-info inline">
+            <p><strong>Date Handling:</strong> Posts will be published with their original dates from the JSON file. 
+            On reimport, publish dates are preserved but WordPress will update the modified date to current time.</p>
+        </div>
+    `;
+    
+    $('#import-info').html(html);
+    updateProgress(0, data.total_posts, 0);
+}
